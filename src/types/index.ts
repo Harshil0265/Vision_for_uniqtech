@@ -2,6 +2,8 @@ export type WorkItemType = 'epic' | 'story' | 'task' | 'bug' | 'spike' | 'subtas
 
 export type Priority = 'blocker' | 'high' | 'medium' | 'low' | 'lowest';
 
+export type ProjectRole = 'owner' | 'admin' | 'member' | 'viewer';
+
 export interface User {
   id: string;
   name: string;
@@ -10,6 +12,16 @@ export interface User {
   role: string;
   department: string;
   status: 'online' | 'busy' | 'away' | 'offline';
+}
+
+export interface ProjectMember {
+  id: string;
+  userId: string;
+  projectId: string;
+  user: User;
+  role: ProjectRole;
+  invitedBy?: string;
+  invitedAt: string;
 }
 
 export interface Subtask {
@@ -53,6 +65,7 @@ export interface Project {
   defaultAssignee: 'unassigned' | 'lead';
   iconGradient: string;
   createdAt: string;
+  members?: ProjectMember[];
 }
 
 export interface Issue {

@@ -11,7 +11,9 @@ import {
   WorkItemType,
   Priority,
   Project,
-  ClerkSession
+  ClerkSession,
+  ProjectMember,
+  ProjectRole
 } from '../types';
 import {
   TEAM_MEMBERS,
@@ -23,6 +25,8 @@ import {
 } from '../data/mockData';
 
 interface ProjectContextType {
+  // Supabase configuration
+  isSupabaseConfigured: boolean;
   // Data
   projects: Project[];
   activeProject: Project;
@@ -67,7 +71,7 @@ interface ProjectContextType {
   setSelectedIssue: (issue: Issue | null) => void;
 
   // Actions
-  createProject: (data: Partial<Project>) => Project;
+  createProject: (data: Partial<Project>) => Promise<Project>;
   updateProject: (id: string, updates: Partial<Project>) => void;
   deleteProject: (id: string) => void;
   createIssue: (issue: Partial<Issue>) => Promise<Issue>;
@@ -87,6 +91,11 @@ interface ProjectContextType {
   switchUser: (user: User) => void;
   markAllNotificationsRead: () => void;
 
+  // Project Members & Invitations
+  inviteMember: (projectId: string, email: string, role: ProjectRole) => Promise<{ success: boolean; error?: string }>;
+  removeMember: (projectId: string, userId: string) => Promise<void>;
+  updateMemberRole: (projectId: string, userId: string, newRole: ProjectRole) => Promise<void>;
+
   // Clerk Auth Integration
   clerkSession: ClerkSession | null;
   clerkSignUp: (data: { name: string; email: string; password?: string; role?: string; department?: string }) => Promise<{ success: boolean; user?: User; error?: string }>;
@@ -97,6 +106,11 @@ interface ProjectContextType {
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
 export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  // Check if Supabase is configured
+  const isSupabaseConfigured = useMemo(() => {
+    return !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
+  }, []);
+
   // Projects
   const [projects, setProjects] = useState<Project[]>(() => {
     const saved = localStorage.getItem('omniplane_projects');
@@ -183,6 +197,45 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     localStorage.setItem('vision_projects', JSON.stringify(projects));
   }, [projects]);
 
+  // Fetch user projects from API on mount if Supabase is configured
+  useEffect(() => {
+    const fetchUserProjects = async () => {
+      if (!isSupabaseConfigured || !clerkSession?.token) {
+        console.log('[ProjectContext] Using localStorage: Supabase not configured or no session');
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/projects', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${clerkSession.token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.projects && Array.isArray(data.projects)) {
+            setProjects(data.projects);
+            console.log('[ProjectContext] Loaded projects from API:', data.projects.length);
+            
+            // Set active project if not already set
+            if (data.projects.length > 0 && !data.projects.find((p: Project) => p.id === activeProject.id)) {
+              setActiveProject(data.projects[0]);
+            }
+          }
+        } else {
+          console.warn('[ProjectContext] Failed to fetch projects from API, using localStorage');
+        }
+      } catch (error) {
+        console.warn('[ProjectContext] Error fetching projects, using localStorage:', error);
+      }
+    };
+
+    fetchUserProjects();
+  }, [isSupabaseConfigured]); // Only run once on mount
+
   useEffect(() => {
     localStorage.setItem('vision_active_project_id', activeProject.id);
   }, [activeProject]);
@@ -257,7 +310,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     setFilterOnlyMyIssues(false);
   };
 
-  const createProject = (data: Partial<Project>): Project => {
+  const createProject = async (data: Partial<Project>): Promise<Project> => {
     const key = (data.key || 'PROJ').toUpperCase().trim();
     const newProject: Project = {
       id: `proj-${Date.now()}`,
@@ -271,9 +324,64 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         : ['epic', 'story', 'task', 'bug'],
       defaultAssignee: data.defaultAssignee || 'unassigned',
       iconGradient: data.iconGradient || 'from-blue-600 via-indigo-600 to-sky-500',
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      members: [{
+        id: `member-${Date.now()}`,
+        userId: currentUser.id,
+        projectId: `proj-${Date.now()}`,
+        user: currentUser,
+        role: 'owner' as ProjectRole,
+        invitedAt: new Date().toISOString()
+      }]
     };
 
+    // Try to create via API if Supabase is configured
+    if (isSupabaseConfigured && clerkSession?.token) {
+      try {
+        const response = await fetch('/api/projects', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${clerkSession.token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(newProject)
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          const createdProject = result.project || newProject;
+          setProjects(prev => [...prev, createdProject]);
+          setActiveProject(createdProject);
+          
+          // Create initial sprint for Scrum
+          if (createdProject.template === 'Scrum') {
+            const initialSprint: Sprint = {
+              id: `sprint-${Date.now()}`,
+              projectId: createdProject.id,
+              name: `${createdProject.name.split(' ')[0]} Sprint 1`,
+              goal: 'Initial sprint delivery and architecture foundation.',
+              startDate: new Date().toISOString().split('T')[0],
+              endDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+              status: 'active',
+              plannedPoints: 13,
+              completedPoints: 0
+            };
+            setSprints(prev => [...prev, initialSprint]);
+          }
+
+          setRecentActivity(prev => [
+            { text: `${currentUser.name} created new project: ${createdProject.name} [${createdProject.key}]`, time: 'Just now' },
+            ...prev
+          ]);
+
+          return createdProject;
+        }
+      } catch (error) {
+        console.warn('[ProjectContext] Failed to create project via API, using localStorage:', error);
+      }
+    }
+
+    // Fallback to localStorage
     setProjects(prev => [...prev, newProject]);
     setActiveProject(newProject);
 
@@ -366,6 +474,54 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       dueDate: issueData.dueDate
     };
 
+    // Try to create via API if Supabase is configured
+    if (isSupabaseConfigured && clerkSession?.token) {
+      try {
+        const response = await fetch(`/api/projects/${targetProjectId}/issues`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${clerkSession.token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(newIssue)
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          const createdIssue = result.issue || newIssue;
+          setIssues(prev => [createdIssue, ...prev]);
+
+          // Add activity stream
+          setRecentActivity(prev => [
+            { text: `${currentUser.name} created ${createdIssue.key}: ${createdIssue.title}`, time: 'Just now', key: createdIssue.key },
+            ...prev.slice(0, 20)
+          ]);
+
+          // In-app notification
+          if (createdIssue.assignee && createdIssue.assignee.email) {
+            setNotifications(prev => [
+              {
+                id: `notif-${Date.now()}`,
+                title: 'New Issue Assigned',
+                message: `${currentUser.name} assigned ${createdIssue.key} to ${createdIssue.assignee?.name}`,
+                timestamp: 'Just now',
+                read: false,
+                type: 'assignment',
+                issueKey: createdIssue.key,
+                author: currentUser
+              },
+              ...prev
+            ]);
+          }
+
+          return createdIssue;
+        }
+      } catch (error) {
+        console.warn('[ProjectContext] Failed to create issue via API, using localStorage:', error);
+      }
+    }
+
+    // Fallback to localStorage
     setIssues(prev => [newIssue, ...prev]);
 
     // Add activity stream
@@ -725,6 +881,121 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
   };
 
+  // Project Member Management Functions
+  const inviteMember = async (projectId: string, email: string, role: ProjectRole): Promise<{ success: boolean; error?: string }> => {
+    if (isSupabaseConfigured && clerkSession?.token) {
+      try {
+        const response = await fetch(`/api/projects/${projectId}/invite`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${clerkSession.token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ email, role })
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          
+          // Update local project members
+          setProjects(prev => prev.map(p => {
+            if (p.id === projectId && result.member) {
+              return {
+                ...p,
+                members: [...(p.members || []), result.member]
+              };
+            }
+            return p;
+          }));
+
+          setRecentActivity(prev => [
+            { text: `${currentUser.name} invited ${email} to project as ${role}`, time: 'Just now' },
+            ...prev
+          ]);
+
+          return { success: true };
+        } else {
+          const errorData = await response.json();
+          return { success: false, error: errorData.error || 'Failed to invite member' };
+        }
+      } catch (error) {
+        return { success: false, error: 'Network error while inviting member' };
+      }
+    }
+
+    // Fallback: localStorage mode doesn't support invitations
+    return { success: false, error: 'Member invitations require Supabase configuration' };
+  };
+
+  const removeMember = async (projectId: string, userId: string): Promise<void> => {
+    if (isSupabaseConfigured && clerkSession?.token) {
+      try {
+        const response = await fetch(`/api/projects/${projectId}/members/${userId}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${clerkSession.token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.ok) {
+          setProjects(prev => prev.map(p => {
+            if (p.id === projectId) {
+              return {
+                ...p,
+                members: (p.members || []).filter(m => m.userId !== userId)
+              };
+            }
+            return p;
+          }));
+
+          setRecentActivity(prev => [
+            { text: `${currentUser.name} removed a member from project`, time: 'Just now' },
+            ...prev
+          ]);
+        }
+      } catch (error) {
+        console.warn('[ProjectContext] Failed to remove member:', error);
+      }
+    }
+  };
+
+  const updateMemberRole = async (projectId: string, userId: string, newRole: ProjectRole): Promise<void> => {
+    if (isSupabaseConfigured && clerkSession?.token) {
+      try {
+        const response = await fetch(`/api/projects/${projectId}/members/${userId}/role`, {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${clerkSession.token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ role: newRole })
+        });
+
+        if (response.ok) {
+          setProjects(prev => prev.map(p => {
+            if (p.id === projectId) {
+              return {
+                ...p,
+                members: (p.members || []).map(m => 
+                  m.userId === userId ? { ...m, role: newRole } : m
+                )
+              };
+            }
+            return p;
+          }));
+
+          setRecentActivity(prev => [
+            { text: `${currentUser.name} updated member role to ${newRole}`, time: 'Just now' },
+            ...prev
+          ]);
+        }
+      } catch (error) {
+        console.warn('[ProjectContext] Failed to update member role:', error);
+      }
+    }
+  };
+
   // Clerk Auth Actions
   const clerkSignUp = async (data: {
     name: string;
@@ -830,6 +1101,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   return (
     <ProjectContext.Provider
       value={{
+        isSupabaseConfigured,
         projects,
         activeProject,
         setActiveProject,
@@ -889,6 +1161,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         deleteColumn,
         switchUser,
         markAllNotificationsRead,
+
+        inviteMember,
+        removeMember,
+        updateMemberRole,
 
         clerkSession,
         clerkSignUp,

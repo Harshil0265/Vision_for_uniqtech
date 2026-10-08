@@ -4,18 +4,78 @@
  */
 
 import React from 'react';
-import { SignUpButton, SignInButton } from '@clerk/clerk-react';
+import { SignUpButton, SignInButton, useUser } from '@clerk/clerk-react';
 import { VisionLogo } from './VisionLogo';
+import { useProject } from '../context/ProjectContext';
 import {
   Layers,
   Rocket,
   BarChart3,
   Zap,
   Users,
-  Calendar
+  Calendar,
+  FolderPlus
 } from 'lucide-react';
 
 export const HomePage: React.FC = () => {
+  const { isSignedIn } = useUser();
+  const { projects, setIsCreateProjectModalOpen } = useProject();
+
+  // Show welcome screen for authenticated users with no projects
+  if (isSignedIn && projects.length === 0) {
+    return (
+      <div className="min-h-screen w-full bg-gradient-to-br from-blue-50 via-indigo-50 to-slate-50 flex items-center justify-center px-6">
+        <div className="max-w-2xl w-full text-center space-y-8">
+          <div className="flex justify-center">
+            <VisionLogo size="lg" showSubtitle={true} />
+          </div>
+
+          <div className="space-y-4">
+            <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tight">
+              Welcome to Vision
+            </h1>
+            <p className="text-lg md:text-xl text-slate-600 max-w-xl mx-auto leading-relaxed">
+              Create your first project to get started with sprint planning, kanban boards, and team collaboration.
+            </p>
+          </div>
+
+          <button
+            onClick={() => setIsCreateProjectModalOpen(true)}
+            className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-bold text-lg shadow-xl hover:shadow-2xl hover:scale-105 transition-all duration-200 cursor-pointer"
+          >
+            <FolderPlus className="w-6 h-6" />
+            <span>Create Your First Project</span>
+          </button>
+
+          <div className="pt-8 grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
+            <div className="p-4 bg-white rounded-xl shadow-sm border border-slate-200">
+              <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center mb-3">
+                <Layers className="w-5 h-5 text-blue-600" />
+              </div>
+              <h3 className="font-semibold text-slate-900 mb-1">Organize Work</h3>
+              <p className="text-sm text-slate-600">Create issues, epics, and tasks with custom workflows.</p>
+            </div>
+
+            <div className="p-4 bg-white rounded-xl shadow-sm border border-slate-200">
+              <div className="w-10 h-10 rounded-lg bg-indigo-100 flex items-center justify-center mb-3">
+                <Users className="w-5 h-5 text-indigo-600" />
+              </div>
+              <h3 className="font-semibold text-slate-900 mb-1">Collaborate</h3>
+              <p className="text-sm text-slate-600">Invite team members and work together in real-time.</p>
+            </div>
+
+            <div className="p-4 bg-white rounded-xl shadow-sm border border-slate-200">
+              <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center mb-3">
+                <BarChart3 className="w-5 h-5 text-purple-600" />
+              </div>
+              <h3 className="font-semibold text-slate-900 mb-1">Track Progress</h3>
+              <p className="text-sm text-slate-600">Monitor velocity, burndown, and team performance.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="min-h-screen w-full bg-slate-50 flex flex-col">
       {/* Hero Section */}

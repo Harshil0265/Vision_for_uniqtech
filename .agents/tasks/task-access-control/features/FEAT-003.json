@@ -1,0 +1,34 @@
+{
+  "id": "FEAT-003",
+  "type": "feat",
+  "description": "Update frontend state management and UI components to use Supabase backend APIs instead of localStorage, with graceful fallback. Modify ProjectContext.tsx to fetch from API on load, create permissions utility, build InviteMemberModal component, update ProjectsView and HomePage for new user experience.",
+  "status": "completed",
+  "steps": [
+    "Create h:\\vision for uniqtech\\src\\utils\\permissions.ts with functions: canInviteMembers(userRole), canEditIssue(userRole), canDeleteProject(userRole), canManageMembers(userRole), canCreateSprint(userRole). Owner has all rights, admin has most except delete project, member can create/edit issues and comments, viewer is read-only. Export ProjectRole type union ('owner' | 'admin' | 'member' | 'viewer').",
+    "Update h:\\vision for uniqtech\\src\\types\\index.ts: Add ProjectMember interface {id: string; userId: string; projectId: string; user: User; role: 'owner' | 'admin' | 'member' | 'viewer'; invitedBy?: string; invitedAt: string}. Add ProjectRole type. Update Project interface to include members?: ProjectMember[] array.",
+    "Update h:\\vision for uniqtech\\src\\context\\ProjectContext.tsx: Add isSupabaseConfigured state checking if VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY exist. Add fetchUserProjects() function that calls GET /api/projects with Clerk session token in Authorization header, sets projects state. Modify initial projects state loading: if isSupabaseConfigured, call fetchUserProjects() on mount instead of loading from localStorage; if not configured or fetch fails, fall back to localStorage/mockData. Update createProject() to call POST /api/projects API, then refresh projects list. Update createIssue() to call POST /api/projects/:id/issues. Add inviteMember(projectId, email, role) function calling POST /api/projects/:id/invite. Add removeMember(projectId, userId) function. Add updateMemberRole(projectId, userId, newRole) function. Keep localStorage persistence for fallback mode.",
+    "Create h:\\vision for uniqtech\\src\\components\\InviteMemberModal.tsx: Modal with project prop. Display current project members list with avatar, name, role badge, and remove button (visible only if currentUser is owner/admin and using canManageMembers check). Email input field for new invitation. Role dropdown (Admin, Member, Viewer - Owner not selectable as only project creator gets owner). Invite button calls context.inviteMember(). Show loading and error states. Close button.",
+    "Update h:\\vision for uniqtech\\src\\components\\ProjectsView.tsx: Add Invite Members button to each project card, visible only if user is owner/admin of that project (check activeProject.members array for currentUser's role, use canInviteMembers). Add member count badge showing total members. Wire Invite button to open InviteMemberModal with selected project. Import and render InviteMemberModal at component level with state to track which project is being edited.",
+    "Update h:\\vision for uniqtech\\src\\components\\HomePage.tsx: Modify to show different content for new users. If isSignedIn (from Clerk) and projects.length === 0, show welcome screen with 'Welcome to Vision' heading, subtext 'Create your first project to get started', and prominent Create Project button calling setIsCreateProjectModalOpen(true). Otherwise show existing landing page for anonymous users.",
+    "Update ProjectContext.tsx to export isSupabaseConfigured boolean and add it to context value so components can conditionally show features"
+  ],
+  "acceptance_criteria": [
+    "src/utils/permissions.ts exports role-based permission checking functions",
+    "src/types/index.ts includes ProjectMember interface and updated Project type with members array",
+    "ProjectContext.tsx fetches projects from GET /api/projects when Supabase is configured, falls back to localStorage otherwise",
+    "InviteMemberModal component allows inviting users by email with role selection",
+    "ProjectsView shows Invite Members button only for owners/admins with member count badge",
+    "HomePage shows empty state with Create Project button for authenticated users with no projects",
+    "All CRUD operations (create project, create issue, invite member) call backend APIs when configured"
+  ],
+  "verification": [
+    "Run npm run build to verify TypeScript compilation passes",
+    "Run npm run dev and test with VITE_SUPABASE_URL present: verify new Clerk user sees empty project list with welcome message",
+    "Create a project and verify it's saved via API call (check Network tab in DevTools)",
+    "Verify Invite Members button appears on project cards for project owner",
+    "Open InviteMemberModal and verify invite functionality works, members list updates",
+    "Test with VITE_SUPABASE_URL removed from .env: verify app falls back to localStorage and still works"
+  ],
+  "blocked_reason": null,
+  "findings": "Successfully implemented frontend integration with Supabase APIs and graceful localStorage fallback. Created permissions utility with role-based checks (owner, admin, member, viewer). Updated types to include ProjectMember interface and ProjectRole type. Modified ProjectContext to detect Supabase configuration via environment variables and fetch projects from API on mount with fallback to localStorage. Implemented async createProject and createIssue functions that attempt API calls when configured. Added inviteMember, removeMember, and updateMemberRole functions for member management. Created InviteMemberModal component with member list, role management, and email invitation form. Updated ProjectsView to show member count badge and Invite Members button (only visible to owners/admins). Modified HomePage to display welcome screen with Create Project button for authenticated users with no projects. Updated CreateProjectModal to handle async createProject. All acceptance criteria met. Build passes without errors."
+}

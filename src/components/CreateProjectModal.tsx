@@ -75,13 +75,13 @@ export const CreateProjectModal: React.FC = () => {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !key.trim()) return;
 
     const lead = teamMembers.find(m => m.id === leadId) || currentUser;
 
-    createProject({
+    await createProject({
       name: name.trim(),
       key: key.trim().toUpperCase(),
       description: description.trim(),

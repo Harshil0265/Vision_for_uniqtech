@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { Project } from '../types';
 import { WorkItemIcon } from './WorkItemIcon';
+import { InviteMemberModal } from './InviteMemberModal';
+import { canInviteMembers } from '../utils/permissions';
 import {
   FolderKanban,
   Plus,
@@ -13,7 +15,9 @@ import {
   CheckCircle2,
   ShieldCheck,
   Layers,
-  Kanban
+  Kanban,
+  UserPlus,
+  Users
 } from 'lucide-react';
 
 export const ProjectsView: React.FC = () => {
@@ -25,10 +29,12 @@ export const ProjectsView: React.FC = () => {
     sprints,
     setIsCreateProjectModalOpen,
     setActiveTab,
-    deleteProject
+    deleteProject,
+    currentUser
   } = useProject();
 
   const [projectSearch, setProjectSearch] = useState('');
+  const [inviteModalProject, setInviteModalProject] = useState<Project | null>(null);
 
   const filteredProjects = projects.filter(p => {
     if (!projectSearch.trim()) return true;
@@ -39,6 +45,11 @@ export const ProjectsView: React.FC = () => {
   const handleSelectProject = (project: Project) => {
     setActiveProject(project);
     setActiveTab('board');
+  };
+
+  const getCurrentUserRole = (project: Project) => {
+    const member = project.members?.find(m => m.userId === currentUser.id);
+    return member?.role || 'viewer';
   };
 
   return (
@@ -86,6 +97,9 @@ export const ProjectsView: React.FC = () => {
           const projSprints = sprints.filter(s => s.projectId === proj.id);
           const activeProjSprint = projSprints.find(s => s.status === 'active');
           const completedIssues = projIssues.filter(i => i.status === 'done').length;
+          const userRole = getCurrentUserRole(proj);
+          const canInvite = canInviteMembers(userRole);
+          const memberCount = proj.members?.length || 0;
 
           return (
             <div
@@ -122,19 +136,27 @@ export const ProjectsView: React.FC = () => {
                     </div>
                   </div>
 
-                  {projects.length > 1 && (
-                    <button
-                      onClick={() => {
-                        if (confirm(`Delete project "${proj.name}" and all its issues?`)) {
-                          deleteProject(proj.id);
-                        }
-                      }}
-                      className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-100 cursor-pointer"
-                      title="Delete project"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+                  <div className="flex items-center gap-1">
+                    {memberCount > 0 && (
+                      <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-slate-100 border border-slate-200" title="Project members">
+                        <Users className="w-3 h-3 text-slate-600" />
+                        <span className="text-xs font-semibold text-slate-700">{memberCount}</span>
+                      </div>
+                    )}
+                    {projects.length > 1 && (
+                      <button
+                        onClick={() => {
+                          if (confirm(`Delete project "${proj.name}" and all its issues?`)) {
+                            deleteProject(proj.id);
+                          }
+                        }}
+                        className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-100 cursor-pointer"
+                        title="Delete project"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Description */}
@@ -177,35 +199,54 @@ export const ProjectsView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Footer: Lead & Switch Action */}
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <img
-                    src={proj.lead.avatar}
-                    alt={proj.lead.name}
-                    className="w-5 h-5 rounded-full object-cover ring-1 ring-slate-200"
-                  />
-                  <div className="text-[11px] text-slate-600 truncate max-w-[120px]">
-                    Lead: <span className="font-medium text-slate-800">{proj.lead.name.split(' ')[0]}</span>
+              {/* Footer: Lead, Invite & Switch Action */}
+              <div className="pt-3 border-t border-slate-100 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <img
+                      src={proj.lead.avatar}
+                      alt={proj.lead.name}
+                      className="w-5 h-5 rounded-full object-cover ring-1 ring-slate-200"
+                    />
+                    <div className="text-[11px] text-slate-600 truncate max-w-[120px]">
+                      Lead: <span className="font-medium text-slate-800">{proj.lead.name.split(' ')[0]}</span>
+                    </div>
                   </div>
+
+                  <button
+                    onClick={() => handleSelectProject(proj)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      isActive
+                        ? 'bg-blue-600 text-white shadow-2xs'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <span>{isActive ? 'View Board' : 'Switch Project'}</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
                 </div>
 
-                <button
-                  onClick={() => handleSelectProject(proj)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                    isActive
-                      ? 'bg-blue-600 text-white shadow-2xs'
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                  }`}
-                >
-                  <span>{isActive ? 'View Board' : 'Switch Project'}</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
+                {canInvite && (
+                  <button
+                    onClick={() => setInviteModalProject(proj)}
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-50 to-blue-50 hover:from-indigo-100 hover:to-blue-100 border border-indigo-200/60 text-indigo-700 text-xs font-semibold transition-all cursor-pointer"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>Invite Members</span>
+                  </button>
+                )}
               </div>
             </div>
           );
         })}
       </div>
+
+      {/* Invite Member Modal */}
+      <InviteMemberModal
+        project={inviteModalProject}
+        isOpen={inviteModalProject !== null}
+        onClose={() => setInviteModalProject(null)}
+      />
     </div>
   );
 };
