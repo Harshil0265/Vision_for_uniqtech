@@ -1,0 +1,28 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Add Supabase integration with database schema, RLS policies, and migration SQL. Install @supabase/supabase-js, create Supabase client library, define complete database schema with users, projects, project_members (role-based), issues, sprints, and comments tables. Implement Row Level Security policies so users only access their own projects. Create migration SQL file and environment variable placeholders.",
+  "status": "completed",
+  "steps": [
+    "Install @supabase/supabase-js dependency via npm install @supabase/supabase-js",
+    "Create h:\\vision for uniqtech\\src\\lib\\supabase.ts with createClient using VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY from import.meta.env, including null checks and fallback handling",
+    "Create h:\\vision for uniqtech\\.agents\\tasks\\supabase-schema.sql with complete database schema: users table (id uuid primary key, clerk_user_id text unique, email text unique not null, name text, avatar text, role text, department text, created_at timestamptz), projects table (id uuid primary key, name text not null, key text unique not null, description text, lead_user_id uuid references users, template text, allowed_issue_types jsonb, default_assignee text, icon_gradient text, created_at timestamptz), project_members table (id uuid primary key, project_id uuid references projects on delete cascade, user_id uuid references users on delete cascade, role text check (role in ('owner', 'admin', 'member', 'viewer')), invited_by uuid references users, invited_at timestamptz, unique(project_id, user_id)), issues table (id uuid, project_id uuid references projects on delete cascade, key text unique, title text, description text, type text, priority text, status text, assignee_id uuid references users, reporter_id uuid references users, sprint_id uuid, story_points int, labels jsonb, subtasks jsonb, due_date timestamptz, created_at timestamptz, updated_at timestamptz), sprints table (id uuid, project_id uuid references projects on delete cascade, name text, goal text, start_date date, end_date date, status text, completed_at timestamptz, planned_points int, completed_points int), comments table (id uuid, issue_id uuid references issues on delete cascade, author_id uuid references users, content text, mentions jsonb, created_at timestamptz)",
+    "Add Row Level Security (RLS) policies to supabase-schema.sql: Enable RLS on all tables. users table: SELECT policy allows users to see all users (team directory). projects table: SELECT policy allows users to see projects where they are lead OR exist in project_members. INSERT policy allows authenticated users to create projects. UPDATE/DELETE policy allows only project owners (via project_members where role='owner'). project_members table: SELECT policy allows viewing members of projects the user can access. INSERT policy allows project admins/owners to invite. DELETE policy allows owners/admins to remove members. issues/sprints/comments tables: All operations allowed only if user has access to parent project via project_members join.",
+    "Update h:\\vision for uniqtech\\.env.example to include VITE_SUPABASE_URL=your_supabase_project_url and VITE_SUPABASE_ANON_KEY=your_supabase_anon_key with comments explaining these are optional (graceful fallback to localStorage)",
+    "Create h:\\vision for uniqtech\\.agents\\tasks\\setup-instructions.md documenting: 1. Create Supabase project at supabase.com, 2. Run the SQL migration from .agents/tasks/supabase-schema.sql in Supabase SQL Editor, 3. Copy project URL and anon key to .env file, 4. Restart dev server"
+  ],
+  "acceptance_criteria": [
+    "@supabase/supabase-js is installed in package.json dependencies",
+    "src/lib/supabase.ts exports a configured Supabase client that gracefully handles missing env vars",
+    "supabase-schema.sql contains complete schema with all tables, foreign keys, and RLS policies",
+    "setup-instructions.md provides clear step-by-step Supabase setup guide",
+    ".env.example includes Supabase environment variables"
+  ],
+  "verification": [
+    "Run npm run build and confirm TypeScript compilation succeeds with no errors",
+    "Manually inspect src/lib/supabase.ts to verify it exports a valid Supabase client with env var handling",
+    "Manually inspect supabase-schema.sql to verify schema completeness and RLS policy presence"
+  ],
+  "blocked_reason": null,
+  "findings": "Successfully installed @supabase/supabase-js (using --legacy-peer-deps due to esbuild peer dependency conflict with vite 8.3.3). Created Supabase client with graceful fallback handling for missing environment variables. Complete database schema created with all required tables (users, projects, project_members, issues, sprints, comments) including proper foreign keys, constraints, and indexes. Row Level Security policies implemented to ensure users only access projects they own or are invited to. Setup instructions documented with clear step-by-step guide. Build verification passed successfully."
+}
