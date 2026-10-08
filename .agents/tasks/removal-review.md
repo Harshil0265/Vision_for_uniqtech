@@ -49,42 +49,15 @@ types/index.ts removed three interfaces (EmailDispatchRecord, AutomationRule, Re
 
 ## ProjectContext state and action removal
 
-ProjectContext.tsx is the central state manager. Removed state variables:
-
-- `emailOutbox: EmailDispatchRecord[]`
-- `automationRules: AutomationRule[]`
-- `releases: ReleasePipeline[]`
-- `isEmailOutboxOpen: boolean`
-- `isWorkflowModalOpen: boolean`
-
-Removed functions:
-
-- `triggerNodemailerAlert()`
-- `sendManualEmail()`
-- `toggleAutomationRule()`
-- `runAutomationRule()`
-- `createAutomationRule()`
-- `deleteAutomationRule()`
-- `createRelease()`
-- `updateReleaseStatus()`
-- `setIsEmailOutboxOpen()`
-- `setIsWorkflowModalOpen()`
-
-The `createIssue()`, `updateIssue()`, `addComment()`, and `completeSprint()` functions previously called `triggerNodemailerAlert()` to dispatch email notifications when certain events occurred (e.g., issue assigned to a user, priority escalated to blocker, sprint completed). All `triggerNodemailerAlert()` invocations removed from these functions. In-app notifications (via `setNotifications()`) remain and still work — the removal only affects external email dispatch.
-
-The useEffect that fetched `/api/emails/outbox` on mount removed. localStorage persistence calls for `omniplane_automation_rules` and `omniplane_releases` removed. The `ProjectContextType` interface updated to remove all deleted functions and state from its type signature.
+ProjectContext.tsx removed 5 state variables (emailOutbox, automationRules, releases, isEmailOutboxOpen, isWorkflowModalOpen) and 10 functions (triggerNodemailerAlert, sendManualEmail, toggleAutomationRule, runAutomationRule, createAutomationRule, deleteAutomationRule, createRelease, updateReleaseStatus, setIsEmailOutboxOpen, setIsWorkflowModalOpen). The `createIssue()`, `updateIssue()`, `addComment()`, and `completeSprint()` functions no longer call `triggerNodemailerAlert()` to dispatch external email. In-app notifications (via `setNotifications()`) remain. The useEffect that fetched `/api/emails/outbox` on mount removed. localStorage persistence calls for `omniplane_automation_rules` and `omniplane_releases` removed.
 
 ## KanbanBoard and TeamView cleanup
 
-KanbanBoard.tsx previously destructured `setIsWorkflowModalOpen` from `useProject()` and rendered a "Customize Columns" button in the board header that opened the WorkflowBuilderModal. The button and its handler removed. The board header now shows only the view title, filter controls, and the create issue button.
-
-TeamView.tsx previously destructured `sendManualEmail` from `useProject()` and rendered a "Send Direct Nodemailer Alert" button next to each team member card. The button, its click handler (`handleSendPing`), and the Mail icon import removed. The team member card description text was updated from "Send test email alerts or assign work items" to "Assign work items and collaborate on projects" to reflect the removal of email functionality.
+KanbanBoard.tsx removed the "Customize Columns" button and its `setIsWorkflowModalOpen` handler. TeamView.tsx removed the "Send Direct Nodemailer Alert" button, its click handler (`handleSendPing`), and the Mail icon import. The team member card description text changed from "Send test email alerts or assign work items" to "Assign work items and collaborate on projects".
 
 ## Mock data considerations
 
-mockData.ts exports `INITIAL_SPRINTS` and `INITIAL_ISSUES`. Sprint 25 in the OP project is titled "Sprint 25: Nodemailer Automation & Webhooks" with a goal mentioning "automated notification delivery rules, SMTP fallback queues". Issue OP-104 is titled "Nodemailer Automated Notification Engine & HTML Email Templates" with subtasks referencing "Setup Nodemailer transporter with Ethereal SMTP test engine" and "Implement in-app outbox log and manual dispatch test console". A notification in `INITIAL_NOTIFICATIONS` references "OP-104 (Nodemailer Automated Notification Engine)".
-
-These are historical mock data strings that don't reference live code or removed types, but they describe features that no longer exist. If the UI displays these sprint names, issue titles, or notifications to users, they'll see references to a removed feature. The mock data does not import or reference any deleted types or functions, so there's no compile error or runtime failure.
+Sprint 25 is titled "Sprint 25: Nodemailer Automation & Webhooks". Issue OP-104 is titled "Nodemailer Automated Notification Engine & HTML Email Templates" with subtasks referencing "Setup Nodemailer transporter" and "in-app outbox log". A notification references "OP-104 (Nodemailer Automated Notification Engine)". These are historical mock data strings that don't reference live code or removed types, but they describe features that no longer exist. If the UI displays these sprint names, issue titles, or notifications to users, they'll see references to a removed feature.
 
 ## HomePage marketing copy
 
