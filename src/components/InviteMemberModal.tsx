@@ -49,10 +49,10 @@ export const InviteMemberModal: React.FC<InviteMemberModalProps> = ({ project, i
     setIsLoading(false);
 
     if (result.success) {
-      setSuccessMessage(`Successfully invited ${email} as ${role}`);
+      setSuccessMessage(`✅ Invitation sent to ${email} as ${role}. They will receive an email.`);
       setEmail('');
       setRole('member');
-      setTimeout(() => setSuccessMessage(null), 3000);
+      setTimeout(() => setSuccessMessage(null), 5000);
     } else {
       setError(result.error || 'Failed to invite member');
     }

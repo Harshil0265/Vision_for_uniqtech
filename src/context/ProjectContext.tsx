@@ -935,22 +935,33 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         if (response.ok) {
           const result = await response.json();
           
-          // Update local project members
-          setProjects(prev => prev.map(p => {
-            if (p.id === projectId && result.member) {
-              return {
-                ...p,
-                members: [...(p.members || []), result.member]
-              };
-            }
-            return p;
-          }));
+          // Handle pending invite (user doesn't exist yet) or immediate member add
+          if (result.pendingInvite) {
+            // User doesn't exist - invitation email sent
+            setRecentActivity(prev => [
+              { text: `${currentUser.name} sent invitation to ${email} (${role})`, time: 'Just now' },
+              ...prev
+            ]);
+            return { success: true };
+          } else if (result.member) {
+            // User exists - added immediately to project
+            setProjects(prev => prev.map(p => {
+              if (p.id === projectId) {
+                return {
+                  ...p,
+                  members: [...(p.members || []), result.member]
+                };
+              }
+              return p;
+            }));
 
-          setRecentActivity(prev => [
-            { text: `${currentUser.name} invited ${email} to project as ${role}`, time: 'Just now' },
-            ...prev
-          ]);
-
+            setRecentActivity(prev => [
+              { text: `${currentUser.name} invited ${email} to project as ${role}`, time: 'Just now' },
+              ...prev
+            ]);
+            return { success: true };
+          }
+          
           return { success: true };
         } else {
           const errorData = await response.json();
