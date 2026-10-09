@@ -287,7 +287,7 @@ async function verifyProjectAdmin(projectId: string, userId: string): Promise<bo
 }
 
 // 1. POST /api/projects - Create new project
-app.post('/api/projects', requireAuth(), upsertClerkUser, async (req, res) => {
+app.post('/api/projects', flexAuth, upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
   }
@@ -296,10 +296,55 @@ app.post('/api/projects', requireAuth(), upsertClerkUser, async (req, res) => {
     const authReq = req as AuthRequest;
     const clerkUserId = authReq.auth?.userId;
     const customUserId = authReq.customUserId;
-    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
+    const resolvedEmail = (authReq as any).resolvedEmail;
+    
+    // Get or create Supabase user ID
+    let supabaseUserId = resolvedEmail 
+      ? await getSupabaseUserIdByEmail(resolvedEmail)
+      : await getSupabaseUserId(clerkUserId, customUserId);
+    
+    // Create user if doesn't exist
+    if (!supabaseUserId) {
+      let email = '';
+      let name = 'User';
+      let avatar = '';
+      
+      if (clerkUserId && authReq.auth?.sessionClaims) {
+        email = authReq.auth.sessionClaims.email as string || '';
+        name = (authReq.auth.sessionClaims.name as string) || 
+               (authReq.auth.sessionClaims.firstName as string) || 
+               'User';
+        avatar = authReq.auth.sessionClaims.imageUrl as string || '';
+      } else if (customUserId) {
+        const customUser = clerkUsers.find(u => u.id === customUserId);
+        if (customUser) {
+          email = customUser.email;
+          name = customUser.name;
+          avatar = customUser.avatar;
+        }
+      }
+      
+      if (email) {
+        const { data: newUser } = await supabase
+          .from('users')
+          .insert({
+            clerk_user_id: clerkUserId || `custom-${customUserId}`,
+            email, name, avatar,
+            role: 'Member',
+            department: 'Engineering'
+          } as any)
+          .select('id')
+          .single();
+        
+        if (newUser) {
+          supabaseUserId = (newUser as any).id;
+          console.log(`[Project] Created user ${supabaseUserId} for ${email}`);
+        }
+      }
+    }
     
     if (!supabaseUserId) {
-      return res.status(400).json({ success: false, error: 'User not found in database' });
+      return res.status(400).json({ success: false, error: 'Could not identify user' });
     }
 
     const { name, key, description, template, allowedIssueTypes, defaultAssignee, iconGradient } = req.body;
@@ -337,8 +382,10 @@ app.post('/api/projects', requireAuth(), upsertClerkUser, async (req, res) => {
 
     if (memberError) {
       console.error('[Supabase] Error adding project owner:', memberError);
+      return res.status(500).json({ success: false, error: 'Failed to set project ownership' });
     }
 
+    console.log(`[Project] Created project ${(project as any).id} with owner ${supabaseUserId}`);
     res.status(201).json({ success: true, project });
   } catch (error) {
     console.error('[API] Error creating project:', error);
