@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { WorkItemIcon, PriorityIcon } from './WorkItemIcon';
 import { Priority } from '../types';
@@ -65,6 +65,36 @@ export const IssueDetailModal: React.FC = () => {
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Attachment handlers
+  const fetchAttachments = async () => {
+    if (!issueProject || !selectedIssue) return;
+    
+    try {
+      const response = await fetch(
+        `/api/projects/${issueProject.id}/issues/${selectedIssue.id}/attachments`,
+        {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('clerk_session_token') || 'sess_clerk_live_alex_rivera'}`
+          }
+        }
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        setAttachments(data.attachments || []);
+      }
+    } catch (error) {
+      console.error('Error fetching attachments:', error);
+    }
+  };
+
+  // Fetch attachments when modal opens or issue changes
+  useEffect(() => {
+    if (selectedIssue) {
+      fetchAttachments();
+    }
+  }, [selectedIssue.id]);
+
   const handleTitleBlur = () => {
     if (!canEdit) return;
     setIsEditingTitle(false);
@@ -105,29 +135,6 @@ export const IssueDetailModal: React.FC = () => {
     setMentionPickerOpen(false);
     if (commentInputRef.current) {
       commentInputRef.current.focus();
-    }
-  };
-
-  // Attachment handlers
-  const fetchAttachments = async () => {
-    if (!issueProject || !selectedIssue) return;
-    
-    try {
-      const response = await fetch(
-        `/api/projects/${issueProject.id}/issues/${selectedIssue.id}/attachments`,
-        {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('clerk_session_token') || 'sess_clerk_live_alex_rivera'}`
-          }
-        }
-      );
-      
-      if (response.ok) {
-        const data = await response.json();
-        setAttachments(data.attachments || []);
-      }
-    } catch (error) {
-      console.error('Error fetching attachments:', error);
     }
   };
 
