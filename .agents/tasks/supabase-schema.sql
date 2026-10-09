@@ -412,3 +412,53 @@ CREATE INDEX IF NOT EXISTS idx_comments_author_id ON comments(author_id);
 CREATE INDEX IF NOT EXISTS idx_invitation_tokens_token ON invitation_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_invitation_tokens_email ON invitation_tokens(email);
 CREATE INDEX IF NOT EXISTS idx_invitation_tokens_project_id ON invitation_tokens(project_id);
+
+
+-- =====================================================
+-- INVITATION_TOKENS TABLE
+-- =====================================================
+-- Stores pending invitations for users who haven't signed up yet
+CREATE TABLE IF NOT EXISTS invitation_tokens (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('admin', 'member', 'viewer')),
+  token TEXT UNIQUE NOT NULL,
+  invited_by UUID REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '7 days'),
+  accepted_at TIMESTAMPTZ
+);
+
+-- Enable RLS on invitation_tokens
+ALTER TABLE invitation_tokens ENABLE ROW LEVEL SECURITY;
+
+-- Users can view invitations they sent
+CREATE POLICY "invitation_tokens_select_policy" ON invitation_tokens
+  FOR SELECT
+  USING (
+    invited_by = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
+    OR email = (SELECT email FROM users WHERE clerk_user_id = auth.uid()::text)
+  );
+
+-- Only the invited user can accept their invitation (update accepted_at)
+CREATE POLICY "invitation_tokens_update_policy" ON invitation_tokens
+  FOR UPDATE
+  USING (email = (SELECT email FROM users WHERE clerk_user_id = auth.uid()::text));
+
+-- Project admins and owners can create invitation tokens
+CREATE POLICY "invitation_tokens_insert_policy" ON invitation_tokens
+  FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM project_members
+      WHERE project_members.project_id = invitation_tokens.project_id
+        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
+        AND project_members.role IN ('owner', 'admin')
+    )
+  );
+
+-- Create index for performance
+CREATE INDEX IF NOT EXISTS idx_invitation_tokens_email ON invitation_tokens(email);
+CREATE INDEX IF NOT EXISTS idx_invitation_tokens_token ON invitation_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_invitation_tokens_project_id ON invitation_tokens(project_id);
