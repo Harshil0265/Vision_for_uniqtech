@@ -11,7 +11,13 @@ import {
   History,
   Send,
   AtSign,
-  Eye
+  Eye,
+  Paperclip,
+  Download,
+  Upload,
+  File,
+  FileText,
+  Image as ImageIcon
 } from 'lucide-react';
 
 export const IssueDetailModal: React.FC = () => {
@@ -51,8 +57,13 @@ export const IssueDetailModal: React.FC = () => {
   const [isEditingDesc, setIsEditingDesc] = useState(false);
   const [descValue, setDescValue] = useState(selectedIssue.description);
   const [mentionPickerOpen, setMentionPickerOpen] = useState(false);
+  const [attachments, setAttachments] = useState(selectedIssue.attachments || []);
+  const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
 
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleTitleBlur = () => {
     if (!canEdit) return;
@@ -95,6 +106,140 @@ export const IssueDetailModal: React.FC = () => {
     if (commentInputRef.current) {
       commentInputRef.current.focus();
     }
+  };
+
+  // Attachment handlers
+  const fetchAttachments = async () => {
+    if (!issueProject || !selectedIssue) return;
+    
+    try {
+      const response = await fetch(
+        `/api/projects/${issueProject.id}/issues/${selectedIssue.id}/attachments`,
+        {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('clerk_session_token') || 'sess_clerk_live_alex_rivera'}`
+          }
+        }
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        setAttachments(data.attachments || []);
+      }
+    } catch (error) {
+      console.error('Error fetching attachments:', error);
+    }
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    
+    for (let i = 0; i < files.length; i++) {
+      await uploadFile(files[i]);
+    }
+    
+    // Reset input
+    e.target.value = '';
+  };
+
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    
+    for (let i = 0; i < files.length; i++) {
+      await uploadFile(files[i]);
+    }
+  };
+
+  const uploadFile = async (file: File) => {
+    if (!canEdit) {
+      alert('You do not have permission to upload attachments');
+      return;
+    }
+
+    // Validate file size (10 MB for Supabase, 1 MB for localStorage)
+    const maxSize = 10 * 1024 * 1024; // 10 MB
+    if (file.size > maxSize) {
+      alert(`File "${file.name}" is too large. Maximum size is 10 MB.`);
+      return;
+    }
+
+    setIsUploadingAttachment(true);
+    setUploadProgress(0);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch(
+        `/api/projects/${issueProject.id}/issues/${selectedIssue.id}/attachments`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('clerk_session_token') || 'sess_clerk_live_alex_rivera'}`
+          },
+          body: formData
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Upload failed');
+      }
+
+      // Refresh attachments list
+      await fetchAttachments();
+      setUploadProgress(100);
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      alert(error.message || 'Failed to upload file');
+    } finally {
+      setIsUploadingAttachment(false);
+      setUploadProgress(0);
+    }
+  };
+
+  const handleDeleteAttachment = async (attachmentId: string) => {
+    if (!confirm('Are you sure you want to delete this attachment?')) return;
+
+    try {
+      const response = await fetch(
+        `/api/projects/${issueProject.id}/issues/${selectedIssue.id}/attachments/${attachmentId}`,
+        {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('clerk_session_token') || 'sess_clerk_live_alex_rivera'}`
+          }
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Delete failed');
+      }
+
+      // Refresh attachments list
+      await fetchAttachments();
+    } catch (error: any) {
+      console.error('Delete error:', error);
+      alert(error.message || 'Failed to delete attachment');
+    }
+  };
+
+  const getFileIcon = (mimeType: string, filename: string) => {
+    if (mimeType.startsWith('image/')) return <ImageIcon className="w-4 h-4" />;
+    if (mimeType === 'application/pdf') return <FileText className="w-4 h-4" />;
+    return <File className="w-4 h-4" />;
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
   const subtasksCompleted = selectedIssue.subtasks.filter(s => s.completed).length;
@@ -307,6 +452,155 @@ export const IssueDetailModal: React.FC = () => {
               ) : (
                 <div className="text-[11px] text-slate-400 italic border border-dashed border-slate-200 rounded-lg p-2 text-center">
                   Viewers cannot add subtasks
+                </div>
+              )}
+            </div>
+
+            {/* Attachments Section */}
+            <div className="space-y-3 pt-2 border-t border-slate-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Paperclip className="w-4 h-4 text-blue-600" />
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                    File Attachments
+                  </span>
+                  {attachments.length > 0 && (
+                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 font-medium">
+                      {attachments.length}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Upload Area */}
+              {canEdit && (
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={handleDrop}
+                  className={`border-2 border-dashed rounded-xl p-4 text-center transition-colors ${
+                    isDragging
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-slate-200 bg-slate-50 hover:border-slate-300'
+                  }`}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept="image/*,application/pdf,text/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.js,.ts,.py,.json,.xml,.yaml"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+                  <Upload className="w-6 h-6 text-slate-400 mx-auto mb-2" />
+                  <p className="text-xs text-slate-600 mb-1">
+                    Drag and drop files here or{' '}
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="text-blue-600 hover:text-blue-700 font-semibold cursor-pointer"
+                    >
+                      browse files
+                    </button>
+                  </p>
+                  <p className="text-[10px] text-slate-400">
+                    Images, PDFs, documents, code files • Max 10 MB per file
+                  </p>
+                  
+                  {isUploadingAttachment && (
+                    <div className="mt-3">
+                      <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-1">Uploading...</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Attachments List */}
+              {attachments.length > 0 ? (
+                <div className="space-y-2">
+                  {attachments.map((att: any) => {
+                    const isImage = att.mimeType?.startsWith('image/');
+                    const canDeleteAttachment = 
+                      currentUser.id === att.uploadedBy?.id || 
+                      ['admin', 'owner'].includes(userRole || '');
+
+                    return (
+                      <div
+                        key={att.id}
+                        className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200 hover:bg-slate-100 transition-colors"
+                      >
+                        {/* File Icon/Thumbnail */}
+                        <div className="flex-shrink-0">
+                          {isImage ? (
+                            <img
+                              src={att.url}
+                              alt={att.filename}
+                              className="w-12 h-12 object-cover rounded border border-slate-200"
+                              style={{ maxHeight: '80px' }}
+                            />
+                          ) : (
+                            <div className="w-10 h-10 bg-white rounded border border-slate-200 flex items-center justify-center text-slate-500">
+                              {getFileIcon(att.mimeType || '', att.filename)}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* File Info */}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-slate-800 truncate">
+                            {att.filename}
+                          </p>
+                          <p className="text-[10px] text-slate-500">
+                            {formatFileSize(att.size)} • Uploaded by {att.uploadedBy?.name || 'Unknown'}
+                          </p>
+                          <p className="text-[10px] text-slate-400 font-mono">
+                            {new Date(att.uploadedAt).toLocaleString([], {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </p>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-1">
+                          <a
+                            href={att.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 rounded hover:bg-slate-200 text-slate-600 hover:text-blue-600 transition-colors cursor-pointer"
+                            title="Download"
+                          >
+                            <Download className="w-4 h-4" />
+                          </a>
+                          {canEdit && canDeleteAttachment && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteAttachment(att.id)}
+                              className="p-1.5 rounded hover:bg-red-50 text-slate-600 hover:text-red-600 transition-colors cursor-pointer"
+                              title="Delete attachment"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-3 text-xs text-slate-400 border border-dashed border-slate-200 rounded-lg">
+                  No attachments yet.{canEdit ? ' Upload files above.' : ''}
                 </div>
               )}
             </div>

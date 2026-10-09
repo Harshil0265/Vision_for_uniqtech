@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import { clerkMiddleware, requireAuth } from '@clerk/express';
 import type { SessionAuthObject } from '@clerk/express';
 import { createClient } from '@supabase/supabase-js';
+import multer from 'multer';
+import crypto from 'crypto';
 
 // Type extension for Express Request with Clerk auth
 interface AuthRequest extends express.Request {
@@ -48,6 +50,42 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY) {
 
 app.use(express.json());
 app.use(clerkMiddleware());
+
+// Configure multer for file uploads (memory storage for Supabase)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10 MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Accept images, PDFs, documents, and common code files
+    const allowedMimeTypes = [
+      'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp',
+      'application/pdf',
+      'text/plain', 'text/csv',
+      'application/json', 'application/xml',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .pptx
+      'application/msword', // .doc
+      'application/vnd.ms-excel', // .xls
+      'application/vnd.ms-powerpoint', // .ppt
+      'text/javascript', 'application/javascript',
+      'text/typescript',
+      'text/x-python',
+      'application/yaml', 'text/yaml'
+    ];
+    
+    const allowedExtensions = ['.js', '.ts', '.py', '.json', '.xml', '.yaml', '.yml', '.txt', '.md', '.csv'];
+    const fileExtension = file.originalname.toLowerCase().substring(file.originalname.lastIndexOf('.'));
+    
+    if (allowedMimeTypes.includes(file.mimetype) || allowedExtensions.includes(fileExtension)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`File type not allowed: ${file.mimetype}`));
+    }
+  }
+});
 
 // Middleware to auto-upsert Clerk users into Supabase
 const upsertClerkUser = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -1247,7 +1285,261 @@ app.delete('/api/issues/:issueId', requireAuth(), upsertClerkUser, async (req, r
   }
 });
 
-// 13. GET /api/projects/:id/sprints - Get project sprints
+// 13. POST /api/projects/:projectId/issues/:issueId/attachments - Upload attachment
+app.post('/api/projects/:projectId/issues/:issueId/attachments', 
+  requireAuth(), 
+  upsertClerkUser, 
+  upload.single('file'), 
+  async (req, res) => {
+    if (!supabase) {
+      return res.status(503).json({ success: false, error: 'Supabase not configured' });
+    }
+
+    try {
+      const { projectId, issueId } = req.params;
+      const authReq = req as AuthRequest;
+      const clerkUserId = authReq.auth?.userId;
+      const customUserId = authReq.customUserId;
+      const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
+      
+      if (!supabaseUserId) {
+        return res.status(400).json({ success: false, error: 'User not found in database' });
+      }
+
+      // Verify user has member/admin/owner role
+      const { data: membership } = await supabase
+        .from('project_members')
+        .select('role')
+        .eq('project_id', projectId)
+        .eq('user_id', supabaseUserId)
+        .single();
+
+      if (!membership || (membership as any).role === 'viewer') {
+        return res.status(403).json({ success: false, error: 'Viewers cannot upload attachments' });
+      }
+
+      // Verify issue exists and belongs to project
+      const { data: issue } = await supabase
+        .from('issues')
+        .select('id, project_id')
+        .eq('id', issueId)
+        .eq('project_id', projectId)
+        .single();
+
+      if (!issue) {
+        return res.status(404).json({ success: false, error: 'Issue not found in this project' });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: 'No file uploaded' });
+      }
+
+      const file = req.file;
+      const fileId = crypto.randomUUID();
+      const fileExtension = file.originalname.substring(file.originalname.lastIndexOf('.'));
+      const storagePath = `${projectId}/${issueId}/${fileId}${fileExtension}`;
+
+      // Upload to Supabase Storage
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('issue-attachments')
+        .upload(storagePath, file.buffer, {
+          contentType: file.mimetype,
+          cacheControl: '3600',
+          upsert: false
+        });
+
+      if (uploadError) {
+        console.error('[Supabase Storage] Upload error:', uploadError);
+        return res.status(400).json({ success: false, error: uploadError.message });
+      }
+
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('issue-attachments')
+        .getPublicUrl(storagePath);
+
+      // Insert metadata into attachments table
+      const { data: attachment, error: dbError } = await supabase
+        .from('attachments')
+        .insert({
+          issue_id: issueId,
+          filename: file.originalname,
+          size: file.size,
+          mime_type: file.mimetype,
+          storage_path: storagePath,
+          url: urlData.publicUrl,
+          uploaded_by: supabaseUserId,
+          uploaded_at: new Date().toISOString()
+        } as any)
+        .select(`
+          id,
+          filename,
+          size,
+          mime_type,
+          url,
+          uploaded_at,
+          uploaded_by:users!attachments_uploaded_by_fkey(id, name, email, avatar, role, department)
+        `)
+        .single();
+
+      if (dbError) {
+        console.error('[Supabase] Error saving attachment metadata:', dbError);
+        // Try to clean up uploaded file
+        await supabase.storage.from('issue-attachments').remove([storagePath]);
+        return res.status(400).json({ success: false, error: dbError.message });
+      }
+
+      res.json({ success: true, attachment });
+    } catch (error) {
+      console.error('[API] Error uploading attachment:', error);
+      res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+  }
+);
+
+// 14. GET /api/projects/:projectId/issues/:issueId/attachments - List attachments
+app.get('/api/projects/:projectId/issues/:issueId/attachments', 
+  requireAuth(), 
+  upsertClerkUser, 
+  async (req, res) => {
+    if (!supabase) {
+      return res.status(503).json({ success: false, error: 'Supabase not configured' });
+    }
+
+    try {
+      const { projectId, issueId } = req.params;
+      const authReq = req as AuthRequest;
+      const clerkUserId = authReq.auth?.userId;
+      const customUserId = authReq.customUserId;
+      const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
+      
+      if (!supabaseUserId) {
+        return res.status(400).json({ success: false, error: 'User not found in database' });
+      }
+
+      // Verify user has access to project
+      const hasAccess = await verifyProjectAccess(projectId, supabaseUserId);
+      if (!hasAccess) {
+        return res.status(403).json({ success: false, error: 'Access denied to this project' });
+      }
+
+      // Verify issue exists and belongs to project
+      const { data: issue } = await supabase
+        .from('issues')
+        .select('id, project_id')
+        .eq('id', issueId)
+        .eq('project_id', projectId)
+        .single();
+
+      if (!issue) {
+        return res.status(404).json({ success: false, error: 'Issue not found in this project' });
+      }
+
+      // Fetch attachments
+      const { data: attachments, error } = await supabase
+        .from('attachments')
+        .select(`
+          id,
+          filename,
+          size,
+          mime_type,
+          url,
+          uploaded_at,
+          uploaded_by:users!attachments_uploaded_by_fkey(id, name, email, avatar, role, department)
+        `)
+        .eq('issue_id', issueId)
+        .order('uploaded_at', { ascending: false });
+
+      if (error) {
+        console.error('[Supabase] Error fetching attachments:', error);
+        return res.status(400).json({ success: false, error: error.message });
+      }
+
+      res.json({ success: true, attachments: attachments || [] });
+    } catch (error) {
+      console.error('[API] Error fetching attachments:', error);
+      res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+  }
+);
+
+// 15. DELETE /api/projects/:projectId/issues/:issueId/attachments/:attachmentId - Delete attachment
+app.delete('/api/projects/:projectId/issues/:issueId/attachments/:attachmentId', 
+  requireAuth(), 
+  upsertClerkUser, 
+  async (req, res) => {
+    if (!supabase) {
+      return res.status(503).json({ success: false, error: 'Supabase not configured' });
+    }
+
+    try {
+      const { projectId, issueId, attachmentId } = req.params;
+      const authReq = req as AuthRequest;
+      const clerkUserId = authReq.auth?.userId;
+      const customUserId = authReq.customUserId;
+      const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
+      
+      if (!supabaseUserId) {
+        return res.status(400).json({ success: false, error: 'User not found in database' });
+      }
+
+      // Fetch attachment to verify ownership and get storage path
+      const { data: attachment } = await supabase
+        .from('attachments')
+        .select('id, storage_path, uploaded_by, issue_id')
+        .eq('id', attachmentId)
+        .eq('issue_id', issueId)
+        .single();
+
+      if (!attachment) {
+        return res.status(404).json({ success: false, error: 'Attachment not found' });
+      }
+
+      // Check if user can delete: must be uploader or admin/owner
+      const { data: membership } = await supabase
+        .from('project_members')
+        .select('role')
+        .eq('project_id', projectId)
+        .eq('user_id', supabaseUserId)
+        .single();
+
+      const canDelete = (attachment as any).uploaded_by === supabaseUserId || 
+                       (membership && ['admin', 'owner'].includes((membership as any).role));
+
+      if (!canDelete) {
+        return res.status(403).json({ success: false, error: 'You can only delete your own attachments unless you are an admin/owner' });
+      }
+
+      // Delete from storage
+      const { error: storageError } = await supabase.storage
+        .from('issue-attachments')
+        .remove([(attachment as any).storage_path]);
+
+      if (storageError) {
+        console.error('[Supabase Storage] Delete error:', storageError);
+        // Continue anyway to clean up database
+      }
+
+      // Delete from database
+      const { error: dbError } = await supabase
+        .from('attachments')
+        .delete()
+        .eq('id', attachmentId);
+
+      if (dbError) {
+        console.error('[Supabase] Error deleting attachment metadata:', dbError);
+        return res.status(400).json({ success: false, error: dbError.message });
+      }
+
+      res.json({ success: true, message: 'Attachment deleted successfully' });
+    } catch (error) {
+      console.error('[API] Error deleting attachment:', error);
+      res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+  }
+);
+
+// 16. GET /api/projects/:id/sprints - Get project sprints
 app.get('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
@@ -1288,7 +1580,7 @@ app.get('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req,
   }
 });
 
-// 14. POST /api/projects/:id/sprints - Create sprint
+// 17. POST /api/projects/:id/sprints - Create sprint
 app.post('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
@@ -1341,7 +1633,7 @@ app.post('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req
   }
 });
 
-// 15. POST /api/projects/:id/issues/:issueId/comments - Add comment to issue
+// 18. POST /api/projects/:id/issues/:issueId/comments - Add comment to issue
 app.post('/api/projects/:id/issues/:issueId/comments', requireAuth(), upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });

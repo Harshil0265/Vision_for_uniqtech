@@ -575,6 +575,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
           timestamp: new Date().toISOString()
         }
       ],
+      attachments: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       dueDate: issueData.dueDate,

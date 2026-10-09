@@ -68,6 +68,16 @@ export interface Project {
   members?: ProjectMember[];
 }
 
+export interface Attachment {
+  id: string;
+  filename: string;
+  size: number;
+  mimeType: string;
+  url: string;
+  uploadedBy: User;
+  uploadedAt: string;
+}
+
 export interface Issue {
   id: string;
   key: string; // e.g. OP-101, MOB-202
@@ -87,6 +97,7 @@ export interface Issue {
   subtasks: Subtask[];
   comments: CommentItem[];
   activities: ActivityItem[];
+  attachments?: Attachment[];
   dueDate?: string;
   assignedAt?: string;
   createdAt: string;

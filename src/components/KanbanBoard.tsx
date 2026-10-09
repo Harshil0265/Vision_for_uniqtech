@@ -14,7 +14,8 @@ import {
   Layers,
   MessageSquare,
   CheckSquare,
-  Clock
+  Clock,
+  Paperclip
 } from 'lucide-react';
 
 export const KanbanBoard: React.FC = () => {
@@ -223,6 +224,13 @@ export const KanbanBoard: React.FC = () => {
               <span className="flex items-center gap-1 text-[10px] text-slate-500 font-mono">
                 <MessageSquare className="w-3 h-3 text-slate-400" />
                 {issue.comments.length}
+              </span>
+            )}
+
+            {issue.attachments && issue.attachments.length > 0 && (
+              <span className="flex items-center gap-1 text-[10px] text-slate-500 font-mono">
+                <Paperclip className="w-3 h-3 text-slate-400" />
+                {issue.attachments.length}
               </span>
             )}
           </div>
