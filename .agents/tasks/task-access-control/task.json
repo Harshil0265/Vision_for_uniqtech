@@ -1,0 +1,7 @@
+{
+  "task_id": "task-access-control",
+  "task_description": "Implement project-level access control and user invitation system with Supabase backend, replacing localStorage mock data while maintaining graceful fallback",
+  "status": "pending",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004"],
+  "blocked_reason": null
+}

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { Sprint, Issue } from '../types';
 import { WorkItemIcon, PriorityIcon } from './WorkItemIcon';
+import { getUserRoleInProject, canEditIssue, canCreateSprint } from '../utils/permissions';
 import {
   Calendar,
   CheckCircle2,
@@ -18,6 +19,7 @@ export const BacklogView: React.FC = () => {
     sprints,
     issues,
     activeProject,
+    currentUser,
     startSprint,
     completeSprint,
     createSprint,
@@ -34,13 +36,18 @@ export const BacklogView: React.FC = () => {
   const projectSprints = sprints.filter(s => s.projectId === activeProject.id);
   const projectIssues = issues.filter(i => i.projectId === activeProject.id);
 
+  // Get user's role in the current project
+  const userRole = getUserRoleInProject(activeProject, currentUser.id);
+  const canEdit = userRole ? canEditIssue(userRole) : false;
+  const canManageSprints = userRole ? canCreateSprint(userRole) : false;
+
   const toggleCollapse = (id: string) => {
     setCollapsedSprints(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
   const handleCreateSprint = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSprintName.trim()) return;
+    if (!canManageSprints || !newSprintName.trim()) return;
     createSprint(
       newSprintName.trim(),
       newSprintGoal.trim() || 'Sprint goals defined during planning.',
@@ -112,9 +119,12 @@ export const BacklogView: React.FC = () => {
           {/* Quick Move Sprint Dropdown */}
           <select
             value={currentSprintId || 'backlog'}
-            onChange={e => moveIssueSprint(issue.id, e.target.value === 'backlog' ? 'backlog' : e.target.value)}
-            className="bg-white border border-slate-200 text-slate-600 text-[11px] rounded px-2 py-0.5 focus:outline-none focus:border-blue-500 cursor-pointer shadow-2xs font-medium"
-            title="Move to another Sprint"
+            onChange={e => canEdit && moveIssueSprint(issue.id, e.target.value === 'backlog' ? 'backlog' : e.target.value)}
+            disabled={!canEdit}
+            className={`bg-white border border-slate-200 text-slate-600 text-[11px] rounded px-2 py-0.5 focus:outline-none focus:border-blue-500 shadow-2xs font-medium ${
+              canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
+            }`}
+            title={!canEdit ? 'Read-only (viewer role)' : 'Move to another Sprint'}
           >
             {projectSprints.map(s => (
               <option key={s.id} value={s.id}>
@@ -146,20 +156,28 @@ export const BacklogView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2.5">
-          <button
-            onClick={() => setIsNewSprintFormOpen(!isNewSprintFormOpen)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700 shadow-2xs transition-colors cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Create Sprint</span>
-          </button>
-          <button
-            onClick={() => setIsCreateModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-xs transition-all active:scale-95 cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Create Issue</span>
-          </button>
+          {canManageSprints ? (
+            <button
+              onClick={() => setIsNewSprintFormOpen(!isNewSprintFormOpen)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700 shadow-2xs transition-colors cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Create Sprint</span>
+            </button>
+          ) : (
+            <div className="text-[11px] text-slate-400 italic">
+              Admin or Owner role required to create sprints
+            </div>
+          )}
+          {canEdit && (
+            <button
+              onClick={() => setIsCreateModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-xs transition-all active:scale-95 cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Create Issue</span>
+            </button>
+          )}
         </div>
       </div>
 

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { Issue, KanbanColumn, SwimlaneType } from '../types';
 import { WorkItemIcon, PriorityIcon } from './WorkItemIcon';
+import { getUserRoleInProject, canEditIssue } from '../utils/permissions';
 import {
   SlidersHorizontal,
   CheckCircle2,
@@ -43,6 +44,10 @@ export const KanbanBoard: React.FC = () => {
 
   const [draggedIssueId, setDraggedIssueId] = useState<string | null>(null);
   const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null);
+
+  // Get user's role in the current project
+  const userRole = getUserRoleInProject(activeProject, currentUser.id);
+  const canEdit = userRole ? canEditIssue(userRole) : false;
 
   // Apply active project, active sprint & quick filters
   const filteredIssues = issues.filter(issue => {
@@ -102,16 +107,22 @@ export const KanbanBoard: React.FC = () => {
 
   // Drag handlers
   const handleDragStart = (e: React.DragEvent, id: string) => {
+    if (!canEdit) {
+      e.preventDefault();
+      return;
+    }
     e.dataTransfer.setData('text/plain', id);
     setDraggedIssueId(id);
   };
 
   const handleDragOver = (e: React.DragEvent, colId: string) => {
+    if (!canEdit) return;
     e.preventDefault();
     setDragOverColumnId(colId);
   };
 
   const handleDrop = (e: React.DragEvent, colId: string) => {
+    if (!canEdit) return;
     e.preventDefault();
     const id = e.dataTransfer.getData('text/plain') || draggedIssueId;
     if (id) {
@@ -129,14 +140,15 @@ export const KanbanBoard: React.FC = () => {
     return (
       <div
         key={issue.id}
-        draggable
+        draggable={canEdit}
         onDragStart={e => handleDragStart(e, issue.id)}
         onClick={() => setSelectedIssue(issue)}
         className={`group p-3.5 rounded-xl bg-white hover:bg-slate-50/80 border transition-all duration-150 cursor-pointer shadow-2xs hover:shadow-xs ${
           isBlocker
             ? 'border-red-300 hover:border-red-400 bg-red-50/20'
             : 'border-slate-200/90 hover:border-blue-300'
-        } ${draggedIssueId === issue.id ? 'opacity-40 scale-98' : ''}`}
+        } ${draggedIssueId === issue.id ? 'opacity-40 scale-98' : ''} ${!canEdit ? 'cursor-default' : ''}`}
+        title={!canEdit ? 'Read-only view (viewer role)' : ''}
       >
         {/* Top: Issue Key, Type, Priority & Story Points */}
         <div className="flex items-center justify-between gap-2 mb-2">

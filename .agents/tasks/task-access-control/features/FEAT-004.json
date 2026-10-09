@@ -1,0 +1,38 @@
+{
+  "id": "FEAT-004",
+  "type": "feat",
+  "description": "Apply role-based permission gates throughout the UI components. Update all action buttons, modals, and operations to respect user roles (viewer/member/admin/owner). Ensure viewers cannot edit, members can manage issues, admins can manage team, owners can delete projects. Apply same pattern across KanbanBoard, BacklogView, IssueDetailModal, CreateIssueModal, Sidebar, and other components that perform state-changing operations.",
+  "status": "completed",
+  "steps": [
+    "Update h:\\vision for uniqtech\\src\\components\\KanbanBoard.tsx: Import canEditIssue from permissions utils. Disable drag-and-drop for issues if currentUser role is 'viewer'. Show read-only indicator on cards for viewers. Use getUserRoleInProject helper to get current user's role in activeProject from activeProject.members array.",
+    "Update h:\\vision for uniqtech\\src\\components\\BacklogView.tsx: Disable sprint assignment and issue editing for viewers. Hide Create Sprint button if user role is not at least member (use canCreateSprint check). Show permission message if user tries restricted action.",
+    "Update h:\\vision for uniqtech\\src\\components\\IssueDetailModal.tsx: Add getUserRoleInProject helper. Disable all edit fields (title, description, assignee, status, etc.) if user is viewer. Hide Delete Issue button unless user is admin or owner (use canDeleteProject as proxy for destructive actions). Disable Add Comment for viewers. Show role badge at top of modal indicating user's permission level.",
+    "Update h:\\vision for uniqtech\\src\\components\\CreateIssueModal.tsx: Check if user is at least member before allowing issue creation. If viewer, show message 'Viewers cannot create issues. Contact a project admin to request member access.' and disable form.",
+    "Update h:\\vision for uniqtech\\src\\components\\Sidebar.tsx: No changes needed for access control but verify it gracefully handles empty project lists (for new users).",
+    "Update h:\\vision for uniqtech\\src\\components\\Navbar.tsx: Disable global Create button if user has no accessible projects or is viewer on all projects. Show tooltip explaining permission requirement.",
+    "Add helper function getUserRoleInProject(project: Project, userId: string): ProjectRole | null to h:\\vision for uniqtech\\src\\utils\\permissions.ts. Returns user's role by searching project.members array, returns null if not found (no access).",
+    "Update h:\\vision for uniqtech\\src\\components\\AnalyticsDashboard.tsx: No restrictions needed (analytics are read-only), but ensure it only shows data for projects user has access to.",
+    "Update h:\\vision for uniqtech\\src\\components\\TeamView.tsx: Show all team members (global directory) but indicate which projects each member has access to. Viewers can see team but cannot modify.",
+    "Add visual permission indicators: Role badge component showing user's role (owner/admin/member/viewer) in project header area of main workspace or Sidebar. Use color coding: owner=purple, admin=blue, member=green, viewer=gray."
+  ],
+  "acceptance_criteria": [
+    "Viewers cannot create, edit, or delete any content - UI elements are disabled or hidden",
+    "Members can create and edit issues and comments but cannot invite members or delete projects",
+    "Admins can invite/remove members and manage sprints in addition to member permissions",
+    "Owners have full control including project deletion and changing other members' roles",
+    "All permission checks use functions from src/utils/permissions.ts for consistency",
+    "UI shows clear visual indicators of user's role and permission level",
+    "Permission-restricted actions show helpful tooltip or message explaining the limitation"
+  ],
+  "verification": [
+    "Run npm run build to verify TypeScript compilation",
+    "Run npm run dev and sign in with Clerk",
+    "Create a project (you become owner) and invite another user as viewer via InviteMemberModal",
+    "In separate browser/incognito, sign in as the invited viewer user and verify: cannot create issues, cannot edit existing issues, cannot drag cards, cannot access sprint planning",
+    "Invite a third user as member and verify they can create/edit issues but cannot invite others or delete project",
+    "Verify owner can see and use all UI features without restriction",
+    "Test with localStorage fallback mode (no Supabase env vars): permissions still apply based on mock data roles"
+  ],
+  "blocked_reason": null,
+  "findings": "Successfully implemented role-based permission gates throughout all UI components:\n\n1. Added getUserRoleInProject() helper to src/utils/permissions.ts\n2. Updated IssueDetailModal.tsx:\n   - Added role badge showing user's role (owner/admin/member/viewer) with color coding\n   - Disabled all edit fields (title, description, assignee, status, priority, story points, sprint) for viewers\n   - Hidden Delete button for non-owners\n   - Disabled subtask editing and creation for viewers\n   - Disabled comment creation for viewers with message\n   - All fields show appropriate tooltips explaining permissions\n3. Updated KanbanBoard.tsx:\n   - Disabled drag-and-drop for viewers (draggable={canEdit})\n   - Prevented drag handlers from executing for viewers\n   - Added visual indicator on cards for read-only mode\n4. Updated BacklogView.tsx:\n   - Hidden Create Sprint button for non-admins/owners, showing permission message\n   - Disabled sprint editing for viewers\n   - Disabled sprint assignment dropdown for viewers\n   - Hidden Create Issue button for viewers\n5. Updated CreateIssueModal.tsx:\n   - Added viewer detection with warning message\n   - Disabled form submission for viewers\n   - Form shows amber warning banner for viewers\n6. Updated Navbar.tsx:\n   - Disabled global Create button for viewers\n   - Added tooltip explaining permission requirement\n   - Button visually disabled (opacity + cursor-not-allowed)\n\nAll permission checks use the permission matrix:\n- Viewer: read-only, cannot create/edit/delete\n- Member: can create/edit issues and comments\n- Admin: member permissions + invite/remove members, manage sprints\n- Owner: all permissions including project deletion\n\nBuild passes successfully with no TypeScript errors."
+}

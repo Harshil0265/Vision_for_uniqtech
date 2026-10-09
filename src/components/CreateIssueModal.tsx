@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { WorkItemType, Priority } from '../types';
 import { WorkItemIcon } from './WorkItemIcon';
+import { getUserRoleInProject, canEditIssue } from '../utils/permissions';
 import { X, FolderKanban } from 'lucide-react';
 
 export const CreateIssueModal: React.FC = () => {
@@ -14,13 +15,18 @@ export const CreateIssueModal: React.FC = () => {
     teamMembers,
     sprints,
     activeSprint,
-    columns
+    columns,
+    currentUser
   } = useProject();
 
   if (!isCreateModalOpen) return null;
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>(activeProject.id);
   const currentProj = projects.find(p => p.id === selectedProjectId) || activeProject;
+
+  // Get user's role in the selected project
+  const userRole = getUserRoleInProject(currentProj, currentUser.id);
+  const canCreate = userRole ? canEditIssue(userRole) : false;
 
   const [type, setType] = useState<WorkItemType>(
     currentProj.allowedIssueTypes[0] || 'task'
@@ -44,6 +50,10 @@ export const CreateIssueModal: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canCreate) {
+      alert('Viewers cannot create issues. Contact a project admin to request member access.');
+      return;
+    }
     if (!title.trim()) return;
 
     const selectedAssignee = assigneeId === 'unassigned' ? null : teamMembers.find(m => m.id === assigneeId) || null;
@@ -94,6 +104,13 @@ export const CreateIssueModal: React.FC = () => {
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+          {/* Viewer Warning */}
+          {!canCreate && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+              <strong>Viewers cannot create issues.</strong> Contact a project admin to request member access.
+            </div>
+          )}
+
           {/* Target Project Selection */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -275,7 +292,10 @@ export const CreateIssueModal: React.FC = () => {
             </button>
             <button
               type="submit"
-              className="px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-xs transition-all cursor-pointer"
+              disabled={!canCreate}
+              className={`px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-xs transition-all ${
+                canCreate ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
+              }`}
             >
               Create Work Item
             </button>

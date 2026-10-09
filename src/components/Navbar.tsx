@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { UserButton, useUser } from '@clerk/clerk-react';
 import { VisionLogo } from './VisionLogo';
+import { getUserRoleInProject, canEditIssue } from '../utils/permissions';
 import {
   Plus,
   Search,
@@ -39,6 +40,10 @@ export const Navbar: React.FC = () => {
   const { isSignedIn } = useUser();
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
+
+  // Check if user can create issues in active project
+  const userRoleInActiveProject = getUserRoleInProject(activeProject, currentUser.id);
+  const canCreateIssue = userRoleInActiveProject ? canEditIssue(userRoleInActiveProject) : false;
 
   const notifRef = useRef<HTMLDivElement>(null);
   const projectRef = useRef<HTMLDivElement>(null);
@@ -182,8 +187,12 @@ export const Navbar: React.FC = () => {
       <div className="flex items-center gap-2.5">
         {/* Create Work Item Button with gradient */}
         <button
-          onClick={() => setIsCreateModalOpen(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-medium shadow-xs transition-all duration-150 active:scale-95 cursor-pointer"
+          onClick={() => canCreateIssue && setIsCreateModalOpen(true)}
+          disabled={!canCreateIssue}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-medium shadow-xs transition-all duration-150 active:scale-95 ${
+            canCreateIssue ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
+          }`}
+          title={!canCreateIssue ? 'Viewers cannot create issues. Contact a project admin to request member access.' : 'Create new work item'}
         >
           <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
           <span>Create</span>
