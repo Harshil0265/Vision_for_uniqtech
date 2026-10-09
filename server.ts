@@ -1444,27 +1444,17 @@ app.post('/api/invitations/:token/accept', flexAuth, upsertClerkUser, async (req
   res.json({ success: true, projectId: invitation.project_id });
 });
 
-// Configure Vite integration
-async function startServer() {
-  const isProd = process.env.NODE_ENV === 'production';
-
-  if (!isProd) {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.get('*', (req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
-    });
-  }
-
-  app.listen(PORT, () => {
-    console.log(`[Vision] Server listening on port ${PORT}`);
+// Serve static files in production
+const isProd = process.env.NODE_ENV === 'production';
+if (isProd) {
+  app.use(express.static(path.resolve(__dirname, 'dist')));
+  app.get('*', (req, res) => {
+    res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
   });
 }
 
-startServer();
+// Start the server
+app.listen(PORT, () => {
+  console.log(`[Vision] Server listening on port ${PORT}`);
+  console.log(`[Vision] API endpoints available at http://localhost:${PORT}/api`);
+});
