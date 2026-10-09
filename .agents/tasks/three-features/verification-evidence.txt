@@ -137,6 +137,29 @@ Verification:
 - useEffect properly depends on selectedIssue.id to refetch when issue changes
 - fetchAttachments is called on every modal open
 
+Issue #2: Property name mismatch between backend and frontend for attachments
+Status: ✓ FIXED
+
+Problem:
+- Backend (server.ts) returns attachment data from Supabase with snake_case field names (mime_type, uploaded_at, uploaded_by)
+- Frontend TypeScript interface (types/index.ts) expects camelCase (mimeType, uploadedAt, uploadedBy)
+- This caused att.mimeType to be undefined, breaking file icon detection
+- Would result in wrong icons shown for non-image files
+
+Fix Applied:
+1. Added transformation layer in POST /api/.../attachments endpoint after attachment creation
+2. Added transformation layer in GET /api/.../attachments endpoint 
+3. Both endpoints now transform snake_case to camelCase before sending response
+4. Transformed fields: mime_type → mimeType, uploaded_at → uploadedAt, uploaded_by → uploadedBy
+
+Files Changed:
+- h:\vision for uniqtech\server.ts (lines ~1386-1398 and ~1465-1477)
+
+Verification:
+- TypeScript compilation passes after fix
+- Response structure now matches Attachment interface exactly
+- File icon detection will work correctly for all file types
+
 All three features are now:
 1. Properly typed in the TypeScript type system
 2. Integrated with the ProjectContext state management

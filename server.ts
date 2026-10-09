@@ -1389,7 +1389,18 @@ app.post('/api/projects/:projectId/issues/:issueId/attachments',
         return res.status(400).json({ success: false, error: dbError.message });
       }
 
-      res.json({ success: true, attachment });
+      // Transform snake_case to camelCase for frontend
+      const transformedAttachment = {
+        id: (attachment as any).id,
+        filename: (attachment as any).filename,
+        size: (attachment as any).size,
+        mimeType: (attachment as any).mime_type,
+        url: (attachment as any).url,
+        uploadedAt: (attachment as any).uploaded_at,
+        uploadedBy: (attachment as any).uploaded_by
+      };
+
+      res.json({ success: true, attachment: transformedAttachment });
     } catch (error) {
       console.error('[API] Error uploading attachment:', error);
       res.status(500).json({ success: false, error: 'Internal server error' });
@@ -1455,7 +1466,18 @@ app.get('/api/projects/:projectId/issues/:issueId/attachments',
         return res.status(400).json({ success: false, error: error.message });
       }
 
-      res.json({ success: true, attachments: attachments || [] });
+      // Transform snake_case to camelCase for frontend
+      const transformedAttachments = (attachments || []).map((att: any) => ({
+        id: att.id,
+        filename: att.filename,
+        size: att.size,
+        mimeType: att.mime_type,
+        url: att.url,
+        uploadedAt: att.uploaded_at,
+        uploadedBy: att.uploaded_by
+      }));
+
+      res.json({ success: true, attachments: transformedAttachments });
     } catch (error) {
       console.error('[API] Error fetching attachments:', error);
       res.status(500).json({ success: false, error: 'Internal server error' });
