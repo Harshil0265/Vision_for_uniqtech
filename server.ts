@@ -430,21 +430,55 @@ app.post('/api/projects/:id/invite', flexAuth, upsertClerkUser, async (req, res)
     const customUserId = authReq.customUserId;
     const resolvedEmail = (authReq as any).resolvedEmail;
     
+    console.log('[Invite] Auth debug:', { 
+      clerkUserId, 
+      customUserId, 
+      resolvedEmail,
+      hasAuth: !!authReq.auth,
+      sessionClaims: authReq.auth?.sessionClaims 
+    });
+    
     // Get Supabase user ID - if not found, the calling user themselves don't exist in DB yet
     let supabaseUserId = resolvedEmail 
       ? await getSupabaseUserIdByEmail(resolvedEmail)
       : await getSupabaseUserId(clerkUserId, customUserId);
     
-    // If caller doesn't exist in Supabase yet, create them from Clerk session
-    if (!supabaseUserId && clerkUserId) {
-      const email = authReq.auth?.sessionClaims?.email as string || '';
-      const name = authReq.auth?.sessionClaims?.name as string || authReq.auth?.sessionClaims?.firstName as string || 'User';
-      const avatar = authReq.auth?.sessionClaims?.imageUrl as string || '';
+    // If caller doesn't exist in Supabase yet, create them
+    if (!supabaseUserId) {
+      // Try to extract email from Clerk session or custom user
+      let email = '';
+      let name = 'User';
+      let avatar = '';
+      
+      if (clerkUserId && authReq.auth?.sessionClaims) {
+        email = authReq.auth.sessionClaims.email as string || '';
+        name = (authReq.auth.sessionClaims.name as string) || 
+               (authReq.auth.sessionClaims.firstName as string) || 
+               'User';
+        avatar = authReq.auth.sessionClaims.imageUrl as string || '';
+      } else if (customUserId) {
+        const customUser = clerkUsers.find(u => u.id === customUserId);
+        if (customUser) {
+          email = customUser.email;
+          name = customUser.name;
+          avatar = customUser.avatar;
+        }
+      }
+      
+      if (!email) {
+        console.error('[Invite] Could not extract email from session');
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Could not identify your email. Please try logging out and back in.' 
+        });
+      }
+      
+      console.log('[Invite] Creating Supabase user:', { email, name });
       
       const { data: newUser, error: createError } = await supabase
         .from('users')
         .insert({
-          clerk_user_id: clerkUserId,
+          clerk_user_id: clerkUserId || `custom-${customUserId}`,
           email: email,
           name: name,
           avatar: avatar,
@@ -454,9 +488,17 @@ app.post('/api/projects/:id/invite', flexAuth, upsertClerkUser, async (req, res)
         .select('id')
         .single();
       
-      if (!createError && newUser) {
+      if (createError) {
+        console.error('[Invite] Error creating user:', createError);
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Failed to create user account in database' 
+        });
+      }
+      
+      if (newUser) {
         supabaseUserId = (newUser as any).id;
-        console.log(`[Invite] Created Supabase user for ${email}`);
+        console.log(`[Invite] Created Supabase user ${supabaseUserId} for ${email}`);
       }
     }
     
