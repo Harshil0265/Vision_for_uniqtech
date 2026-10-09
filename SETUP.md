@@ -40,7 +40,7 @@ npm install
 1. In Supabase dashboard, go to **SQL Editor**
 2. Copy all SQL from `.agents/tasks/supabase-schema.sql`
 3. Paste and click **RUN**
-4. Verify tables created: `users`, `projects`, `project_members`, `issues`, `sprints`, `comments`
+4. Verify tables created: `users`, `projects`, `project_members`, `issues`, `sprints`, `comments`, `invitation_tokens`
 
 ### C. Configure Environment Variables
 Your `.env` file is already configured with:
@@ -50,7 +50,48 @@ Your `.env` file is already configured with:
 
 ---
 
-## 4️⃣ Run the Application
+## 4️⃣ Configure Gmail SMTP for Invitation Emails (Optional but Recommended)
+
+To enable email notifications when inviting project members:
+
+### A. Create Gmail App Password
+1. Go to your [Google Account Security Settings](https://myaccount.google.com/security)
+2. Enable **2-Step Verification** (required)
+3. Go to **App passwords** (under 2-Step Verification)
+4. Generate app password:
+   - Select app: **Mail**
+   - Select device: **Other** (type "Vision" or "Project Management")
+5. Copy the 16-character password (e.g., `abcd efgh ijkl mnop`)
+
+### B. Update .env File
+Add these variables to your `.env` file:
+
+```bash
+# Gmail SMTP Configuration
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-gmail@gmail.com
+SMTP_PASS=abcdefghijklmnop  # Your 16-character app password (no spaces)
+SMTP_FROM_NAME=Vision Project Management
+APP_URL=http://localhost:5173  # Change to your deployment URL in production
+```
+
+### C. Test Email Invitations
+1. Restart your dev server: `npm run dev`
+2. Create a project
+3. Click "Invite Members"
+4. Invite someone with their email
+5. They should receive a beautiful HTML email with:
+   - Project name and role
+   - "Accept Invitation" button
+   - Link to sign up (if new user) or login
+
+**Note:** If SMTP is not configured, invitations will still work in the database, but no email will be sent. The invitation will be recorded and can be accepted when the user signs up with that email address.
+
+---
+
+## 5️⃣ Run the Application
 
 ```bash
 # Development mode (runs both frontend and backend)
@@ -82,7 +123,9 @@ Open: `http://localhost:5173`
 1. Create a project (you become Owner)
 2. Click "Invite Members" button
 3. Enter email address and select role
-4. User receives access to that project only
+4. **New users:** Receive email invitation → Sign up → Automatically added to project
+5. **Existing users:** Receive email notification → Log in to see new project
+6. All invitations tracked in `invitation_tokens` table with 7-day expiry
 
 ### ✅ User-Specific Views
 - New users see **empty state** with "Create Project" button
@@ -159,9 +202,11 @@ vision-for-uniqtech/
 - Verify Supabase connection in Network tab
 
 ### "Invite not working"
-- User must sign up with exact email you invited
-- Check Supabase `project_members` table for entry
-- Verify RLS policies are enabled
+- **Email not sent:** Check SMTP credentials in `.env` (see Gmail SMTP setup above)
+- **Network error:** Verify both frontend and backend servers are running (`npm run dev`)
+- **Custom session tokens:** Hybrid auth middleware now supports both Clerk JWT and demo session tokens
+- Check Supabase `project_members` or `invitation_tokens` table for entry
+- Verify RLS policies are enabled in Supabase
 
 ---
 
