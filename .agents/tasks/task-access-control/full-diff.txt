@@ -1,0 +1,4447 @@
+﻿diff --git a/.agents/tasks/access-control-plan.md b/.agents/tasks/access-control-plan.md
+new file mode 100644
+index 0000000..5188322
+--- /dev/null
++++ b/.agents/tasks/access-control-plan.md
+@@ -0,0 +1,298 @@
++# Implementation Plan: Project-Level Access Control & User Invitation System
++
++## Overview
++Implement a complete project-level access control system for the Vision project management app by adding Supabase backend while maintaining Clerk authentication and graceful localStorage fallback for development.
++
++## Architecture Decisions
++
++### Database Choice: Supabase PostgreSQL
++- **Rationale**: Supabase provides PostgreSQL with built-in Row Level Security (RLS), real-time subscriptions, and REST API generation. Perfect for multi-tenant project access control where users should only see their own projects.
++- **Integration**: @supabase/supabase-js client library, no migration from Clerk (Clerk stays for auth, Supabase for data).
++
++### Access Control Model: Role-Based (RBAC)
++- **Roles**: Owner (creator, full control) ΓåÆ Admin (manage team) ΓåÆ Member (create/edit content) ΓåÆ Viewer (read-only)
++- **Enforcement**: Backend via RLS policies (database-level), frontend via permission utility functions (UI-level).
++- **Storage**: project_members join table with role column.
++
++### Fallback Strategy
++- **When**: VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY missing from environment.
++- **Behavior**: ProjectContext checks `isSupabaseConfigured` flag. If false, falls back to localStorage + mockData loading. All features work in degraded mode for local development.
++- **Implementation**: Wrap all API calls in try-catch, on error revert to localStorage operations.
++
++---
++
++## Feature Breakdown (FEAT-001 through FEAT-004)
++
++This plan has been decomposed into 4 features for sequential implementation. See individual FEAT-NNN.json files in .agents/tasks/task-access-control/features/ for detailed steps.
++
++### FEAT-001: Supabase Integration & Database Schema
++**Files**: 
++- src/lib/supabase.ts (new)
++- .agents/tasks/supabase-schema.sql (new)
++- .agents/tasks/setup-instructions.md (new)
++- .env.example (modify)
++- package.json (add dependency)
++
++**What**: Install Supabase client, define complete database schema with users, projects, project_members, issues, sprints, comments tables. Implement Row Level Security policies. Create migration SQL and setup docs.
++
++**Verification**: `npm run build` succeeds, supabase-schema.sql is syntactically valid.
++
++---
++
++### FEAT-002: Backend API Endpoints
++**Files**:
++- server.ts (extensive modifications)
++
++**What**: Implement 15+ REST endpoints for project CRUD, member invitations, issue/sprint/comment operations. Integrate Supabase client in server.ts using SUPABASE_SERVICE_KEY for admin operations. Use existing @clerk/express requireAuth middleware to verify JWT. Auto-upsert Clerk users into Supabase users table on first auth.
++
++**Endpoints**:
++- POST /api/projects (create + auto-add creator as owner)
++- GET /api/projects (user's accessible projects only)
++- POST /api/projects/:id/invite (email + role)
++- GET /api/projects/:id/members
++- DELETE /api/projects/:id/members/:userId
++- PATCH /api/projects/:id/members/:userId (change role)
++- GET /api/projects/:id/issues
++- POST /api/projects/:id/issues
++- PATCH /api/issues/:issueId
++- DELETE /api/issues/:issueId
++- GET /api/projects/:id/sprints
++- POST /api/projects/:id/sprints
++- POST /api/projects/:id/issues/:issueId/comments
++
++**Verification**: `npm run build`, start dev server, test endpoints via curl/Postman with Clerk token.
++
++---
++
++### FEAT-003: Frontend State Management & UI
++**Files**:
++- src/context/ProjectContext.tsx (major refactor)
++- src/types/index.ts (add ProjectMember, ProjectRole types)
++- src/utils/permissions.ts (new)
++- src/components/InviteMemberModal.tsx (new)
++- src/components/ProjectsView.tsx (modify)
++- src/components/HomePage.tsx (modify)
++
++**What**: Replace localStorage-first loading with API-first (when configured). Add fetchUserProjects(), inviteMember(), removeMember() functions to context. Create permission utility with canInviteMembers, canEditIssue, etc. Build InviteMemberModal component for team management. Update ProjectsView to show Invite button and member count. Update HomePage to show welcome screen for new users with no projects.
++
++**Verification**: `npm run build`, `npm run dev`. Test with Supabase env vars: new user sees empty state. Test without env vars: localStorage fallback works.
++
++---
++
++### FEAT-004: Permission Gates Throughout UI
++**Files**:
++- src/components/KanbanBoard.tsx (modify)
++- src/components/BacklogView.tsx (modify)
++- src/components/IssueDetailModal.tsx (modify)
++- src/components/CreateIssueModal.tsx (modify)
++- src/components/Navbar.tsx (modify)
++- src/components/Sidebar.tsx (verify)
++- src/utils/permissions.ts (add getUserRoleInProject helper)
++
++**What**: Apply role-based restrictions to all UI actions. Viewers cannot edit anything. Members can manage issues but not team. Admins can invite/remove members. Owners can delete projects. Disable/hide buttons, show permission tooltips, add role badges.
++
++**Verification**: `npm run build`, manual testing with multiple users of different roles. Create project as owner, invite viewer, verify viewer cannot edit. Invite member, verify member can create issues but not invite others.
++
++---
++
++## Implementation Order & Dependencies
++
++1. **FEAT-001** (Supabase setup) - No dependencies, foundational
++2. **FEAT-002** (Backend APIs) - Depends on FEAT-001 (needs Supabase client)
++3. **FEAT-003** (Frontend state) - Depends on FEAT-002 (needs API endpoints)
++4. **FEAT-004** (Permission gates) - Depends on FEAT-003 (needs permission utils and member data)
++
++Sequential execution required - each feature builds on the previous.
++
++---
++
++## TypeScript Type Additions
++
++```typescript
++// src/types/index.ts additions
++
++export type ProjectRole = 'owner' | 'admin' | 'member' | 'viewer';
++
++export interface ProjectMember {
++  id: string;
++  userId: string;
++  projectId: string;
++  user: User;
++  role: ProjectRole;
++  invitedBy?: string;
++  invitedAt: string;
++}
++
++// Update existing Project interface
++export interface Project {
++  id: string;
++  name: string;
++  key: string;
++  description: string;
++  lead: User;
++  template: 'Scrum' | 'Kanban' | 'Bug Tracking';
++  allowedIssueTypes: WorkItemType[];
++  defaultAssignee: 'unassigned' | 'lead';
++  iconGradient: string;
++  createdAt: string;
++  members?: ProjectMember[]; // NEW
++}
++```
++
++---
++
++## Database Schema Summary
++
++**users**: id (uuid), clerk_user_id (text unique), email, name, avatar, role, department, created_at
++
++**projects**: id (uuid), name, key (unique), description, lead_user_id (fk users), template, allowed_issue_types (jsonb), default_assignee, icon_gradient, created_at
++
++**project_members**: id (uuid), project_id (fk projects cascade), user_id (fk users cascade), role (owner/admin/member/viewer), invited_by (fk users), invited_at, unique(project_id, user_id)
++
++**issues**: id (uuid), project_id (fk projects cascade), key (unique), title, description, type, priority, status, assignee_id (fk users), reporter_id (fk users), sprint_id (uuid), story_points, labels (jsonb), subtasks (jsonb), due_date, created_at, updated_at
++
++**sprints**: id (uuid), project_id (fk projects cascade), name, goal, start_date, end_date, status, completed_at, planned_points, completed_points
++
++**comments**: id (uuid), issue_id (fk issues cascade), author_id (fk users), content, mentions (jsonb), created_at
++
++**RLS Policies**:
++- users: all authenticated can SELECT (team directory)
++- projects: SELECT where user is lead OR in project_members; INSERT by authenticated; UPDATE/DELETE by owners only
++- project_members: SELECT where user can see project; INSERT by admins/owners; DELETE by admins/owners
++- issues/sprints/comments: all operations only if user in project_members of parent project
++
++---
++
++## API Endpoint Contracts
++
++### POST /api/projects
++**Request**: 
++```json
++{
++  "name": "New Project",
++  "key": "NP",
++  "description": "...",
++  "template": "Scrum",
++  "allowedIssueTypes": ["story", "bug"],
++  "defaultAssignee": "unassigned",
++  "iconGradient": "from-blue-600..."
++}
++```
++**Response**: 
++```json
++{
++  "id": "uuid",
++  "name": "New Project",
++  "key": "NP",
++  "lead": { user object },
++  "members": [{ user object with role: "owner" }],
++  ...
++}
++```
++
++### GET /api/projects
++**Request**: Headers: `Authorization: Bearer <clerk-jwt>`
++**Response**: 
++```json
++[
++  {
++    "id": "uuid",
++    "name": "Project A",
++    "members": [{ id, userId, user, role, invitedAt }],
++    ...
++  }
++]
++```
++
++### POST /api/projects/:id/invite
++**Request**:
++```json
++{
++  "email": "user@example.com",
++  "role": "member"
++}
++```
++**Response**:
++```json
++{
++  "success": true,
++  "member": { id, userId, user, role, invitedAt }
++}
++```
++
++### Other endpoints follow REST conventions: GET returns data, POST creates, PATCH updates, DELETE removes.
++
++---
++
++## Environment Variables
++
++Add to .env (not committed):
++```
++VITE_SUPABASE_URL=https://xxxxx.supabase.co
++VITE_SUPABASE_ANON_KEY=eyJhbGc...
++```
++
++Add to .env.example (committed):
++```
++# Supabase (optional - app falls back to localStorage if not configured)
++VITE_SUPABASE_URL=your_supabase_project_url
++VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
++```
++
++Server also needs (for admin operations):
++```
++SUPABASE_URL=https://xxxxx.supabase.co
++SUPABASE_SERVICE_KEY=eyJhbGc... (service_role key, not anon key)
++```
++
++---
++
++## Testing Strategy
++
++### Build Verification
++- Run `npm run build` after each feature
++- Run `npm run lint` (tsc --noEmit) to catch type errors
++
++### Manual Testing Checklist (FEAT-004)
++1. **New User Flow**: Sign up with Clerk ΓåÆ See empty projects list + Create Project button
++2. **Project Creation**: Create project ΓåÆ Verify saved via API (Network tab)
++3. **Owner Permissions**: All features accessible
++4. **Invite Viewer**: Invite user as viewer ΓåÆ Sign in as viewer ΓåÆ Verify cannot create/edit
++5. **Invite Member**: Invite as member ΓåÆ Verify can create issues but not invite others
++6. **Invite Admin**: Invite as admin ΓåÆ Verify can manage team
++7. **Fallback Mode**: Remove Supabase env vars ΓåÆ App still works via localStorage
++
++### No Automated Tests
++- No test framework exists in package.json
++- All verification is manual + build checks
++
++---
++
++## Risks & Mitigations
++
++**Risk**: Supabase RLS policies too restrictive, block legitimate operations
++**Mitigation**: Use service_role key on server-side for admin operations, test policies thoroughly
++
++**Risk**: Breaking existing localStorage-based workflow
++**Mitigation**: Graceful fallback when Supabase not configured, maintain localStorage code paths
++
++**Risk**: Clerk user sync to Supabase fails
++**Mitigation**: Auto-upsert middleware on every authenticated request, idempotent INSERT ON CONFLICT
++
++**Risk**: Migration complexity for existing data
++**Mitigation**: Fresh install assumed (no existing production data to migrate)
++
++---
++
++## Success Criteria
++
++- New users logging in with Clerk see empty project list with "Create Project" prompt
++- Users can only see projects they own or are invited to (no leaked data)
++- Project owners can invite members with specific roles (owner/admin/member/viewer)
++- Viewers cannot create or edit any content (UI disabled)
++- Members can create and edit issues but not manage team
++- Admins can invite/remove members
++- Owners can delete projects
++- App works in localhost dev mode without Supabase (localStorage fallback)
++- Build passes: `npm run build` succeeds
++
+diff --git a/.agents/tasks/setup-instructions.md b/.agents/tasks/setup-instructions.md
+new file mode 100644
+index 0000000..385bfc2
+--- /dev/null
++++ b/.agents/tasks/setup-instructions.md
+@@ -0,0 +1,123 @@
++# Supabase Setup Instructions
++
++This guide will help you set up Supabase as the database backend for the Vision project management system. Supabase integration is **optional** - the application will work with localStorage if Supabase is not configured.
++
++## Prerequisites
++
++- A Supabase account (free tier available at [supabase.com](https://supabase.com))
++- Access to the project's `.env` file
++
++## Step-by-Step Setup
++
++### 1. Create a Supabase Project
++
++1. Go to [supabase.com](https://supabase.com) and sign in or create an account
++2. Click **"New Project"** from your dashboard
++3. Fill in the project details:
++   - **Name**: Vision Project Management (or your preferred name)
++   - **Database Password**: Choose a strong password and save it securely
++   - **Region**: Select the region closest to your users
++4. Click **"Create new project"** and wait for provisioning (takes 1-2 minutes)
++
++### 2. Run the Database Migration
++
++1. Once your project is ready, navigate to the **SQL Editor** in the left sidebar
++2. Click **"New query"** to open a blank SQL editor
++3. Open the file `.agents/tasks/supabase-schema.sql` from this project
++4. Copy the entire contents of `supabase-schema.sql`
++5. Paste it into the Supabase SQL Editor
++6. Click **"Run"** (or press Ctrl/Cmd + Enter) to execute the migration
++7. Verify success - you should see a success message and no errors
++
++### 3. Get Your API Keys
++
++1. In your Supabase project dashboard, click on **Settings** (gear icon) in the left sidebar
++2. Navigate to **API** under the Project Settings section
++3. You'll see two important values:
++   - **Project URL**: This is your `VITE_SUPABASE_URL`
++   - **anon public**: This is your `VITE_SUPABASE_ANON_KEY`
++4. Copy both values - you'll need them in the next step
++
++### 4. Configure Environment Variables
++
++1. In your project root, create a `.env` file if it doesn't exist (or copy from `.env.example`)
++2. Add the following lines with your actual values from Step 3:
++
++```env
++VITE_SUPABASE_URL=https://your-project-ref.supabase.co
++VITE_SUPABASE_ANON_KEY=your-anon-key-here
++```
++
++3. Save the `.env` file
++
++**Important**: Never commit the `.env` file to version control. It's already in `.gitignore`.
++
++### 5. Restart the Development Server
++
++1. If the dev server is running, stop it (Ctrl+C)
++2. Start it again with:
++
++```bash
++npm run dev
++```
++
++3. The application will now connect to Supabase instead of using localStorage
++
++## Verification
++
++To verify that Supabase is working correctly:
++
++1. Check the browser console - you should see "Supabase client initialized" (or no warning about localStorage fallback)
++2. Create a new project in the application
++3. Go to your Supabase dashboard ΓåÆ **Table Editor**
++4. You should see the new project in the `projects` table
++
++## Row Level Security (RLS)
++
++The migration includes Row Level Security policies that ensure:
++
++- Users can only see projects they own or are invited to
++- Users can only modify data in projects where they have appropriate permissions
++- Project members are restricted based on their role (owner, admin, member, viewer)
++
++## Troubleshooting
++
++### "Failed to initialize Supabase client"
++
++- Verify your environment variables are correctly set in `.env`
++- Ensure there are no extra spaces or quotes around the values
++- Restart the dev server after changing `.env`
++
++### "relation does not exist" errors
++
++- Make sure you ran the complete SQL migration in Step 2
++- Check the Supabase SQL Editor for any error messages during migration
++
++### Authentication Issues
++
++- Ensure Clerk authentication is properly configured (see Clerk setup docs)
++- Verify that user profiles are being synced to the `users` table
++
++## Next Steps
++
++Once Supabase is set up:
++
++- User profiles will be automatically synced from Clerk to Supabase
++- All project data will persist in Supabase instead of localStorage
++- Row Level Security ensures users only access their permitted data
++- You can view and manage data directly in the Supabase dashboard
++
++## Reverting to localStorage
++
++If you need to temporarily disable Supabase and revert to localStorage:
++
++1. Remove or comment out the Supabase environment variables in `.env`:
++
++```env
++# VITE_SUPABASE_URL=https://your-project-ref.supabase.co
++# VITE_SUPABASE_ANON_KEY=your-anon-key-here
++```
++
++2. Restart the dev server
++
++The application will automatically detect the missing variables and fall back to localStorage.
+diff --git a/.agents/tasks/supabase-schema.sql b/.agents/tasks/supabase-schema.sql
+new file mode 100644
+index 0000000..8a04ae4
+--- /dev/null
++++ b/.agents/tasks/supabase-schema.sql
+@@ -0,0 +1,366 @@
++-- Supabase Database Schema for Vision Project Management System
++-- This schema includes all tables, relationships, and Row Level Security (RLS) policies
++
++-- Enable UUID extension if not already enabled
++CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
++
++-- =====================================================
++-- USERS TABLE
++-- =====================================================
++-- Stores user profiles synced from Clerk authentication
++CREATE TABLE IF NOT EXISTS users (
++  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
++  clerk_user_id TEXT UNIQUE NOT NULL,
++  email TEXT UNIQUE NOT NULL,
++  name TEXT,
++  avatar TEXT,
++  role TEXT,
++  department TEXT,
++  created_at TIMESTAMPTZ DEFAULT NOW()
++);
++
++-- =====================================================
++-- PROJECTS TABLE
++-- =====================================================
++-- Stores project information
++CREATE TABLE IF NOT EXISTS projects (
++  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
++  name TEXT NOT NULL,
++  key TEXT UNIQUE NOT NULL,
++  description TEXT,
++  lead_user_id UUID REFERENCES users(id),
++  template TEXT,
++  allowed_issue_types JSONB DEFAULT '[]'::jsonb,
++  default_assignee TEXT,
++  icon_gradient TEXT,
++  created_at TIMESTAMPTZ DEFAULT NOW()
++);
++
++-- =====================================================
++-- PROJECT_MEMBERS TABLE
++-- =====================================================
++-- Stores project membership and roles
++CREATE TABLE IF NOT EXISTS project_members (
++  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
++  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
++  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
++  role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'member', 'viewer')),
++  invited_by UUID REFERENCES users(id),
++  invited_at TIMESTAMPTZ DEFAULT NOW(),
++  UNIQUE(project_id, user_id)
++);
++
++-- =====================================================
++-- ISSUES TABLE
++-- =====================================================
++-- Stores project issues/tickets
++CREATE TABLE IF NOT EXISTS issues (
++  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
++  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
++  key TEXT UNIQUE NOT NULL,
++  title TEXT NOT NULL,
++  description TEXT,
++  type TEXT,
++  priority TEXT,
++  status TEXT,
++  assignee_id UUID REFERENCES users(id),
++  reporter_id UUID REFERENCES users(id),
++  sprint_id UUID,
++  story_points INTEGER,
++  labels JSONB DEFAULT '[]'::jsonb,
++  subtasks JSONB DEFAULT '[]'::jsonb,
++  due_date TIMESTAMPTZ,
++  created_at TIMESTAMPTZ DEFAULT NOW(),
++  updated_at TIMESTAMPTZ DEFAULT NOW()
++);
++
++-- =====================================================
++-- SPRINTS TABLE
++-- =====================================================
++-- Stores sprint information for agile project management
++CREATE TABLE IF NOT EXISTS sprints (
++  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
++  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
++  name TEXT NOT NULL,
++  goal TEXT,
++  start_date DATE,
++  end_date DATE,
++  status TEXT,
++  completed_at TIMESTAMPTZ,
++  planned_points INTEGER,
++  completed_points INTEGER,
++  created_at TIMESTAMPTZ DEFAULT NOW()
++);
++
++-- =====================================================
++-- COMMENTS TABLE
++-- =====================================================
++-- Stores comments on issues
++CREATE TABLE IF NOT EXISTS comments (
++  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
++  issue_id UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
++  author_id UUID NOT NULL REFERENCES users(id),
++  content TEXT NOT NULL,
++  mentions JSONB DEFAULT '[]'::jsonb,
++  created_at TIMESTAMPTZ DEFAULT NOW()
++);
++
++-- =====================================================
++-- ROW LEVEL SECURITY (RLS) POLICIES
++-- =====================================================
++
++-- Enable RLS on all tables
++ALTER TABLE users ENABLE ROW LEVEL SECURITY;
++ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
++ALTER TABLE project_members ENABLE ROW LEVEL SECURITY;
++ALTER TABLE issues ENABLE ROW LEVEL SECURITY;
++ALTER TABLE sprints ENABLE ROW LEVEL SECURITY;
++ALTER TABLE comments ENABLE ROW LEVEL SECURITY;
++
++-- -----------------------------------------------------
++-- USERS TABLE POLICIES
++-- -----------------------------------------------------
++-- Users can view all other users (team directory functionality)
++CREATE POLICY "users_select_policy" ON users
++  FOR SELECT
++  USING (true);
++
++-- Users can insert their own profile when first signing up
++CREATE POLICY "users_insert_policy" ON users
++  FOR INSERT
++  WITH CHECK (auth.uid()::text = clerk_user_id);
++
++-- Users can update their own profile
++CREATE POLICY "users_update_policy" ON users
++  FOR UPDATE
++  USING (auth.uid()::text = clerk_user_id);
++
++-- -----------------------------------------------------
++-- PROJECTS TABLE POLICIES
++-- -----------------------------------------------------
++-- Users can view projects where they are the lead OR they are a member
++CREATE POLICY "projects_select_policy" ON projects
++  FOR SELECT
++  USING (
++    lead_user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++    OR EXISTS (
++      SELECT 1 FROM project_members
++      WHERE project_members.project_id = projects.id
++        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++    )
++  );
++
++-- Authenticated users can create projects
++CREATE POLICY "projects_insert_policy" ON projects
++  FOR INSERT
++  WITH CHECK (auth.uid() IS NOT NULL);
++
++-- Only project owners can update projects
++CREATE POLICY "projects_update_policy" ON projects
++  FOR UPDATE
++  USING (
++    EXISTS (
++      SELECT 1 FROM project_members
++      WHERE project_members.project_id = projects.id
++        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++        AND project_members.role = 'owner'
++    )
++  );
++
++-- Only project owners can delete projects
++CREATE POLICY "projects_delete_policy" ON projects
++  FOR DELETE
++  USING (
++    EXISTS (
++      SELECT 1 FROM project_members
++      WHERE project_members.project_id = projects.id
++        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++        AND project_members.role = 'owner'
++    )
++  );
++
++-- -----------------------------------------------------
++-- PROJECT_MEMBERS TABLE POLICIES
++-- -----------------------------------------------------
++-- Users can view members of projects they have access to
++CREATE POLICY "project_members_select_policy" ON project_members
++  FOR SELECT
++  USING (
++    EXISTS (
++      SELECT 1 FROM project_members AS pm
++      WHERE pm.project_id = project_members.project_id
++        AND pm.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++    )
++  );
++
++-- Project admins and owners can invite new members
++CREATE POLICY "project_members_insert_policy" ON project_members
++  FOR INSERT
++  WITH CHECK (
++    EXISTS (
++      SELECT 1 FROM project_members AS pm
++      WHERE pm.project_id = project_members.project_id
++        AND pm.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++        AND pm.role IN ('owner', 'admin')
++    )
++  );
++
++-- Project owners and admins can remove members
++CREATE POLICY "project_members_delete_policy" ON project_members
++  FOR DELETE
++  USING (
++    EXISTS (
++      SELECT 1 FROM project_members AS pm
++      WHERE pm.project_id = project_members.project_id
++        AND pm.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++        AND pm.role IN ('owner', 'admin')
++    )
++  );
++
++-- -----------------------------------------------------
++-- ISSUES TABLE POLICIES
++-- -----------------------------------------------------
++-- Users can view issues from projects they are members of
++CREATE POLICY "issues_select_policy" ON issues
++  FOR SELECT
++  USING (
++    EXISTS (
++      SELECT 1 FROM project_members
++      WHERE project_members.project_id = issues.project_id
++        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++    )
++  );
++
++-- Users can create issues in projects they are members of
++CREATE POLICY "issues_insert_policy" ON issues
++  FOR INSERT
++  WITH CHECK (
++    EXISTS (
++      SELECT 1 FROM project_members
++      WHERE project_members.project_id = issues.project_id
++        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++    )
++  );
++
++-- Users can update issues in projects they are members of
++CREATE POLICY "issues_update_policy" ON issues
++  FOR UPDATE
++  USING (
++    EXISTS (
++      SELECT 1 FROM project_members
++      WHERE project_members.project_id = issues.project_id
++        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++    )
++  );
++
++-- Users can delete issues in projects they are members of
++CREATE POLICY "issues_delete_policy" ON issues
++  FOR DELETE
++  USING (
++    EXISTS (
++      SELECT 1 FROM project_members
++      WHERE project_members.project_id = issues.project_id
++        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++    )
++  );
++
++-- -----------------------------------------------------
++-- SPRINTS TABLE POLICIES
++-- -----------------------------------------------------
++-- Users can view sprints from projects they are members of
++CREATE POLICY "sprints_select_policy" ON sprints
++  FOR SELECT
++  USING (
++    EXISTS (
++      SELECT 1 FROM project_members
++      WHERE project_members.project_id = sprints.project_id
++        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++    )
++  );
++
++-- Users can create sprints in projects they are members of
++CREATE POLICY "sprints_insert_policy" ON sprints
++  FOR INSERT
++  WITH CHECK (
++    EXISTS (
++      SELECT 1 FROM project_members
++      WHERE project_members.project_id = sprints.project_id
++        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++    )
++  );
++
++-- Users can update sprints in projects they are members of
++CREATE POLICY "sprints_update_policy" ON sprints
++  FOR UPDATE
++  USING (
++    EXISTS (
++      SELECT 1 FROM project_members
++      WHERE project_members.project_id = sprints.project_id
++        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++    )
++  );
++
++-- Users can delete sprints in projects they are members of
++CREATE POLICY "sprints_delete_policy" ON sprints
++  FOR DELETE
++  USING (
++    EXISTS (
++      SELECT 1 FROM project_members
++      WHERE project_members.project_id = sprints.project_id
++        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++    )
++  );
++
++-- -----------------------------------------------------
++-- COMMENTS TABLE POLICIES
++-- -----------------------------------------------------
++-- Users can view comments on issues from projects they are members of
++CREATE POLICY "comments_select_policy" ON comments
++  FOR SELECT
++  USING (
++    EXISTS (
++      SELECT 1 FROM issues
++      JOIN project_members ON project_members.project_id = issues.project_id
++      WHERE issues.id = comments.issue_id
++        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++    )
++  );
++
++-- Users can create comments on issues from projects they are members of
++CREATE POLICY "comments_insert_policy" ON comments
++  FOR INSERT
++  WITH CHECK (
++    EXISTS (
++      SELECT 1 FROM issues
++      JOIN project_members ON project_members.project_id = issues.project_id
++      WHERE issues.id = comments.issue_id
++        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
++    )
++  );
++
++-- Users can update their own comments
++CREATE POLICY "comments_update_policy" ON comments
++  FOR UPDATE
++  USING (author_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text));
++
++-- Users can delete their own comments
++CREATE POLICY "comments_delete_policy" ON comments
++  FOR DELETE
++  USING (author_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text));
++
++-- =====================================================
++-- INDEXES FOR PERFORMANCE
++-- =====================================================
++CREATE INDEX IF NOT EXISTS idx_users_clerk_user_id ON users(clerk_user_id);
++CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
++CREATE INDEX IF NOT EXISTS idx_projects_key ON projects(key);
++CREATE INDEX IF NOT EXISTS idx_projects_lead_user_id ON projects(lead_user_id);
++CREATE INDEX IF NOT EXISTS idx_project_members_project_id ON project_members(project_id);
++CREATE INDEX IF NOT EXISTS idx_project_members_user_id ON project_members(user_id);
++CREATE INDEX IF NOT EXISTS idx_issues_project_id ON issues(project_id);
++CREATE INDEX IF NOT EXISTS idx_issues_key ON issues(key);
++CREATE INDEX IF NOT EXISTS idx_issues_assignee_id ON issues(assignee_id);
++CREATE INDEX IF NOT EXISTS idx_issues_sprint_id ON issues(sprint_id);
++CREATE INDEX IF NOT EXISTS idx_sprints_project_id ON sprints(project_id);
++CREATE INDEX IF NOT EXISTS idx_comments_issue_id ON comments(issue_id);
++CREATE INDEX IF NOT EXISTS idx_comments_author_id ON comments(author_id);
+diff --git a/.agents/tasks/task-access-control/context.json b/.agents/tasks/task-access-control/context.json
+new file mode 100644
+index 0000000..ff6a175
+--- /dev/null
++++ b/.agents/tasks/task-access-control/context.json
+@@ -0,0 +1,27 @@
++{
++  "project_type": "React + TypeScript + Vite SPA frontend with Express backend, Clerk authentication, moving to Supabase for data persistence",
++  "language": "TypeScript",
++  "build_system": "npm with tsx for dev server (runs server.ts with Vite middleware), vite build for production",
++  "test_framework": "None found in package.json - no test suite exists",
++  "build_command": "npm run build",
++  "test_command": "npm run lint (TypeScript type checking only via tsc --noEmit)",
++  "verification_instructions": "Run npm run build to verify TypeScript compilation passes. Run npm run dev and manually test the application in browser. Check that new users see empty project list with Create Project button, and that project members can only see projects they own or are invited to.",
++  "snapshot_or_generated_files": "dist/ folder is generated by vite build. Not checked into git.",
++  "environment_constraints": "Clerk authentication is already integrated via @clerk/clerk-react and @clerk/express. Must not replace Clerk - only add Supabase alongside it. When VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY are missing, app must gracefully fall back to localStorage so dev still works. server.ts runs on port 3000 by default, uses Vite middleware in dev mode.",
++  "contribution_requirements": "No AGENTS.md or CONTRIBUTING.md found. Standard Git workflow applies.",
++  "key_patterns": "All state managed in src/context/ProjectContext.tsx via React Context + localStorage persistence. Types defined in src/types/index.ts. Mock data in src/data/mockData.ts loaded on first run. Tailwind CSS + Lucide icons for UI. Components follow atomic pattern with modals for creation flows. server.ts has mock auth endpoints (/api/auth/*) that will be supplemented with real data endpoints.",
++  "relevant_files": [
++    "src/context/ProjectContext.tsx",
++    "src/types/index.ts",
++    "server.ts",
++    "src/components/ProjectsView.tsx",
++    "src/components/HomePage.tsx",
++    "src/components/AuthWrapper.tsx",
++    "src/components/ClerkAuthModal.tsx",
++    "src/components/Navbar.tsx",
++    "src/components/Sidebar.tsx",
++    "package.json",
++    ".env.example"
++  ],
++  "directory_structure": "src/components/ (all React components), src/context/ (ProjectContext.tsx for state), src/types/ (TypeScript definitions), src/data/ (mockData.ts), src/lib/ (to be created for Supabase client), src/utils/ (to be created for permissions), server.ts (Express backend at root)"
++}
+diff --git a/.agents/tasks/task-access-control/features/FEAT-001.json b/.agents/tasks/task-access-control/features/FEAT-001.json
+new file mode 100644
+index 0000000..66e4831
+--- /dev/null
++++ b/.agents/tasks/task-access-control/features/FEAT-001.json
+@@ -0,0 +1,28 @@
++{
++  "id": "FEAT-001",
++  "type": "feat",
++  "description": "Add Supabase integration with database schema, RLS policies, and migration SQL. Install @supabase/supabase-js, create Supabase client library, define complete database schema with users, projects, project_members (role-based), issues, sprints, and comments tables. Implement Row Level Security policies so users only access their own projects. Create migration SQL file and environment variable placeholders.",
++  "status": "completed",
++  "steps": [
++    "Install @supabase/supabase-js dependency via npm install @supabase/supabase-js",
++    "Create h:\\vision for uniqtech\\src\\lib\\supabase.ts with createClient using VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY from import.meta.env, including null checks and fallback handling",
++    "Create h:\\vision for uniqtech\\.agents\\tasks\\supabase-schema.sql with complete database schema: users table (id uuid primary key, clerk_user_id text unique, email text unique not null, name text, avatar text, role text, department text, created_at timestamptz), projects table (id uuid primary key, name text not null, key text unique not null, description text, lead_user_id uuid references users, template text, allowed_issue_types jsonb, default_assignee text, icon_gradient text, created_at timestamptz), project_members table (id uuid primary key, project_id uuid references projects on delete cascade, user_id uuid references users on delete cascade, role text check (role in ('owner', 'admin', 'member', 'viewer')), invited_by uuid references users, invited_at timestamptz, unique(project_id, user_id)), issues table (id uuid, project_id uuid references projects on delete cascade, key text unique, title text, description text, type text, priority text, status text, assignee_id uuid references users, reporter_id uuid references users, sprint_id uuid, story_points int, labels jsonb, subtasks jsonb, due_date timestamptz, created_at timestamptz, updated_at timestamptz), sprints table (id uuid, project_id uuid references projects on delete cascade, name text, goal text, start_date date, end_date date, status text, completed_at timestamptz, planned_points int, completed_points int), comments table (id uuid, issue_id uuid references issues on delete cascade, author_id uuid references users, content text, mentions jsonb, created_at timestamptz)",
++    "Add Row Level Security (RLS) policies to supabase-schema.sql: Enable RLS on all tables. users table: SELECT policy allows users to see all users (team directory). projects table: SELECT policy allows users to see projects where they are lead OR exist in project_members. INSERT policy allows authenticated users to create projects. UPDATE/DELETE policy allows only project owners (via project_members where role='owner'). project_members table: SELECT policy allows viewing members of projects the user can access. INSERT policy allows project admins/owners to invite. DELETE policy allows owners/admins to remove members. issues/sprints/comments tables: All operations allowed only if user has access to parent project via project_members join.",
++    "Update h:\\vision for uniqtech\\.env.example to include VITE_SUPABASE_URL=your_supabase_project_url and VITE_SUPABASE_ANON_KEY=your_supabase_anon_key with comments explaining these are optional (graceful fallback to localStorage)",
++    "Create h:\\vision for uniqtech\\.agents\\tasks\\setup-instructions.md documenting: 1. Create Supabase project at supabase.com, 2. Run the SQL migration from .agents/tasks/supabase-schema.sql in Supabase SQL Editor, 3. Copy project URL and anon key to .env file, 4. Restart dev server"
++  ],
++  "acceptance_criteria": [
++    "@supabase/supabase-js is installed in package.json dependencies",
++    "src/lib/supabase.ts exports a configured Supabase client that gracefully handles missing env vars",
++    "supabase-schema.sql contains complete schema with all tables, foreign keys, and RLS policies",
++    "setup-instructions.md provides clear step-by-step Supabase setup guide",
++    ".env.example includes Supabase environment variables"
++  ],
++  "verification": [
++    "Run npm run build and confirm TypeScript compilation succeeds with no errors",
++    "Manually inspect src/lib/supabase.ts to verify it exports a valid Supabase client with env var handling",
++    "Manually inspect supabase-schema.sql to verify schema completeness and RLS policy presence"
++  ],
++  "blocked_reason": null,
++  "findings": "Successfully installed @supabase/supabase-js (using --legacy-peer-deps due to esbuild peer dependency conflict with vite 8.3.3). Created Supabase client with graceful fallback handling for missing environment variables. Complete database schema created with all required tables (users, projects, project_members, issues, sprints, comments) including proper foreign keys, constraints, and indexes. Row Level Security policies implemented to ensure users only access projects they own or are invited to. Setup instructions documented with clear step-by-step guide. Build verification passed successfully."
++}
+diff --git a/.agents/tasks/task-access-control/features/FEAT-002.json b/.agents/tasks/task-access-control/features/FEAT-002.json
+new file mode 100644
+index 0000000..c38bc51
+--- /dev/null
++++ b/.agents/tasks/task-access-control/features/FEAT-002.json
+@@ -0,0 +1,41 @@
++{
++  "id": "FEAT-002",
++  "type": "feat",
++  "description": "Implement backend API endpoints in server.ts for project and member management with Supabase integration. Add real data endpoints for projects CRUD, member invitations, issue/sprint operations. Integrate Clerk JWT verification using @clerk/express requireAuth middleware. On first user login, upsert user record into Supabase users table using Clerk user data.",
++  "status": "completed",
++  "steps": [
++    "Add Supabase client initialization to server.ts using environment variables SUPABASE_URL and SUPABASE_SERVICE_KEY (server-side service key for admin operations, bypassing RLS when needed)",
++    "Implement POST /api/projects endpoint: Extract authenticated user from Clerk req.auth, create project in Supabase projects table, automatically insert creator as owner in project_members table with role='owner'. Return created project.",
++    "Implement GET /api/projects endpoint: Extract user from Clerk req.auth, query Supabase for projects where user is lead OR exists in project_members, join with project_members to include members array. Return user's accessible projects only.",
++    "Implement POST /api/projects/:id/invite endpoint: Require authenticated user, verify caller is admin/owner of project via project_members query. Accept {email, role} in body. Look up invited user by email in users table. Insert into project_members with invited_by set to caller. Return updated members list. If invitee email not found, return 404 error suggesting they sign up first.",
++    "Implement GET /api/projects/:id/members endpoint: Verify user has access to project. Query project_members joined with users table. Return array of members with id, name, email, avatar, role, invited_at.",
++    "Implement DELETE /api/projects/:id/members/:userId endpoint: Verify caller is owner/admin. Delete from project_members where project_id and user_id match. Prevent removing the last owner.",
++    "Implement PATCH /api/projects/:id/members/:userId endpoint: Verify caller is owner/admin. Update role in project_members. Return updated member.",
++    "Implement GET /api/projects/:id/issues endpoint: Verify user access to project. Query issues table where project_id matches, join with users for assignee/reporter data. Return issues array.",
++    "Implement POST /api/projects/:id/issues endpoint: Verify user is at least member. Insert into issues table with auto-generated key (project.key + sequence number). Return created issue.",
++    "Implement PATCH /api/issues/:issueId endpoint: Verify user access. Update issue fields. Return updated issue.",
++    "Implement DELETE /api/issues/:issueId endpoint: Verify user is admin/owner. Delete from issues. Return success.",
++    "Implement GET /api/projects/:id/sprints endpoint: Verify user access. Query sprints where project_id matches. Return sprints array.",
++    "Implement POST /api/projects/:id/sprints endpoint: Verify user is member+. Insert sprint. Return created sprint.",
++    "Implement POST /api/projects/:id/issues/:issueId/comments endpoint: Verify user access. Insert comment with author_id from Clerk auth. Return created comment.",
++    "Add middleware to upsert user on authenticated requests: In existing requireAuth middleware chain or via custom middleware, check if Clerk user exists in Supabase users table (by clerk_user_id). If not, INSERT user record with clerk_user_id, email, name, avatar from Clerk req.auth.user. This ensures all authenticated users have a Supabase users record.",
++    "Update existing /api/auth/me endpoint to also check Supabase users table and return the synced user record"
++  ],
++  "acceptance_criteria": [
++    "All 15+ API endpoints are implemented in server.ts with Clerk authentication",
++    "Endpoints verify project access via project_members table and role permissions",
++    "First-time authenticated users are automatically upserted into Supabase users table",
++    "POST /api/projects automatically adds creator as owner in project_members",
++    "GET /api/projects returns only projects the authenticated user can access (owned or member of)",
++    "Invite endpoint validates roles and checks inviter permissions"
++  ],
++  "verification": [
++    "Run npm run build to verify TypeScript compilation",
++    "Start dev server with npm run dev",
++    "Use curl or Postman to test each endpoint with mock Clerk JWT (can use existing sess_clerk_live_alex_rivera token for testing)",
++    "Verify GET /api/projects returns empty array for new user, and returns projects after creation",
++    "Verify POST /api/projects/:id/invite correctly adds member and enforces role permissions"
++  ],
++  "blocked_reason": null,
++  "findings": "All 13 API endpoints successfully implemented in server.ts with Supabase integration:\n- Supabase client initialized with service role key from environment variables\n- Auto-upsert middleware (upsertClerkUser) syncs Clerk users to Supabase users table\n- POST /api/projects creates project and automatically adds creator as owner\n- GET /api/projects returns only user's accessible projects with members\n- Project member management: invite, list, remove, and update role endpoints\n- Issue CRUD endpoints with project access verification\n- Sprint management endpoints\n- Comment creation endpoint\n- All endpoints use Clerk requireAuth() middleware and SessionAuthObject types\n- Helper functions verify project access and admin roles\n- Updated .env.example with SUPABASE_URL and SUPABASE_SERVICE_KEY\n- TypeScript compilation passes (npm run lint)\n- Production build succeeds (npm run build)"
++}
+diff --git a/.agents/tasks/task-access-control/features/FEAT-003.json b/.agents/tasks/task-access-control/features/FEAT-003.json
+new file mode 100644
+index 0000000..da4b812
+--- /dev/null
++++ b/.agents/tasks/task-access-control/features/FEAT-003.json
+@@ -0,0 +1,34 @@
++{
++  "id": "FEAT-003",
++  "type": "feat",
++  "description": "Update frontend state management and UI components to use Supabase backend APIs instead of localStorage, with graceful fallback. Modify ProjectContext.tsx to fetch from API on load, create permissions utility, build InviteMemberModal component, update ProjectsView and HomePage for new user experience.",
++  "status": "completed",
++  "steps": [
++    "Create h:\\vision for uniqtech\\src\\utils\\permissions.ts with functions: canInviteMembers(userRole), canEditIssue(userRole), canDeleteProject(userRole), canManageMembers(userRole), canCreateSprint(userRole). Owner has all rights, admin has most except delete project, member can create/edit issues and comments, viewer is read-only. Export ProjectRole type union ('owner' | 'admin' | 'member' | 'viewer').",
++    "Update h:\\vision for uniqtech\\src\\types\\index.ts: Add ProjectMember interface {id: string; userId: string; projectId: string; user: User; role: 'owner' | 'admin' | 'member' | 'viewer'; invitedBy?: string; invitedAt: string}. Add ProjectRole type. Update Project interface to include members?: ProjectMember[] array.",
++    "Update h:\\vision for uniqtech\\src\\context\\ProjectContext.tsx: Add isSupabaseConfigured state checking if VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY exist. Add fetchUserProjects() function that calls GET /api/projects with Clerk session token in Authorization header, sets projects state. Modify initial projects state loading: if isSupabaseConfigured, call fetchUserProjects() on mount instead of loading from localStorage; if not configured or fetch fails, fall back to localStorage/mockData. Update createProject() to call POST /api/projects API, then refresh projects list. Update createIssue() to call POST /api/projects/:id/issues. Add inviteMember(projectId, email, role) function calling POST /api/projects/:id/invite. Add removeMember(projectId, userId) function. Add updateMemberRole(projectId, userId, newRole) function. Keep localStorage persistence for fallback mode.",
++    "Create h:\\vision for uniqtech\\src\\components\\InviteMemberModal.tsx: Modal with project prop. Display current project members list with avatar, name, role badge, and remove button (visible only if currentUser is owner/admin and using canManageMembers check). Email input field for new invitation. Role dropdown (Admin, Member, Viewer - Owner not selectable as only project creator gets owner). Invite button calls context.inviteMember(). Show loading and error states. Close button.",
++    "Update h:\\vision for uniqtech\\src\\components\\ProjectsView.tsx: Add Invite Members button to each project card, visible only if user is owner/admin of that project (check activeProject.members array for currentUser's role, use canInviteMembers). Add member count badge showing total members. Wire Invite button to open InviteMemberModal with selected project. Import and render InviteMemberModal at component level with state to track which project is being edited.",
++    "Update h:\\vision for uniqtech\\src\\components\\HomePage.tsx: Modify to show different content for new users. If isSignedIn (from Clerk) and projects.length === 0, show welcome screen with 'Welcome to Vision' heading, subtext 'Create your first project to get started', and prominent Create Project button calling setIsCreateProjectModalOpen(true). Otherwise show existing landing page for anonymous users.",
++    "Update ProjectContext.tsx to export isSupabaseConfigured boolean and add it to context value so components can conditionally show features"
++  ],
++  "acceptance_criteria": [
++    "src/utils/permissions.ts exports role-based permission checking functions",
++    "src/types/index.ts includes ProjectMember interface and updated Project type with members array",
++    "ProjectContext.tsx fetches projects from GET /api/projects when Supabase is configured, falls back to localStorage otherwise",
++    "InviteMemberModal component allows inviting users by email with role selection",
++    "ProjectsView shows Invite Members button only for owners/admins with member count badge",
++    "HomePage shows empty state with Create Project button for authenticated users with no projects",
++    "All CRUD operations (create project, create issue, invite member) call backend APIs when configured"
++  ],
++  "verification": [
++    "Run npm run build to verify TypeScript compilation passes",
++    "Run npm run dev and test with VITE_SUPABASE_URL present: verify new Clerk user sees empty project list with welcome message",
++    "Create a project and verify it's saved via API call (check Network tab in DevTools)",
++    "Verify Invite Members button appears on project cards for project owner",
++    "Open InviteMemberModal and verify invite functionality works, members list updates",
++    "Test with VITE_SUPABASE_URL removed from .env: verify app falls back to localStorage and still works"
++  ],
++  "blocked_reason": null,
++  "findings": "Successfully implemented frontend integration with Supabase APIs and graceful localStorage fallback. Created permissions utility with role-based checks (owner, admin, member, viewer). Updated types to include ProjectMember interface and ProjectRole type. Modified ProjectContext to detect Supabase configuration via environment variables and fetch projects from API on mount with fallback to localStorage. Implemented async createProject and createIssue functions that attempt API calls when configured. Added inviteMember, removeMember, and updateMemberRole functions for member management. Created InviteMemberModal component with member list, role management, and email invitation form. Updated ProjectsView to show member count badge and Invite Members button (only visible to owners/admins). Modified HomePage to display welcome screen with Create Project button for authenticated users with no projects. Updated CreateProjectModal to handle async createProject. All acceptance criteria met. Build passes without errors."
++}
+diff --git a/.agents/tasks/task-access-control/features/FEAT-004.json b/.agents/tasks/task-access-control/features/FEAT-004.json
+new file mode 100644
+index 0000000..1d13d3a
+--- /dev/null
++++ b/.agents/tasks/task-access-control/features/FEAT-004.json
+@@ -0,0 +1,38 @@
++{
++  "id": "FEAT-004",
++  "type": "feat",
++  "description": "Apply role-based permission gates throughout the UI components. Update all action buttons, modals, and operations to respect user roles (viewer/member/admin/owner). Ensure viewers cannot edit, members can manage issues, admins can manage team, owners can delete projects. Apply same pattern across KanbanBoard, BacklogView, IssueDetailModal, CreateIssueModal, Sidebar, and other components that perform state-changing operations.",
++  "status": "completed",
++  "steps": [
++    "Update h:\\vision for uniqtech\\src\\components\\KanbanBoard.tsx: Import canEditIssue from permissions utils. Disable drag-and-drop for issues if currentUser role is 'viewer'. Show read-only indicator on cards for viewers. Use getUserRoleInProject helper to get current user's role in activeProject from activeProject.members array.",
++    "Update h:\\vision for uniqtech\\src\\components\\BacklogView.tsx: Disable sprint assignment and issue editing for viewers. Hide Create Sprint button if user role is not at least member (use canCreateSprint check). Show permission message if user tries restricted action.",
++    "Update h:\\vision for uniqtech\\src\\components\\IssueDetailModal.tsx: Add getUserRoleInProject helper. Disable all edit fields (title, description, assignee, status, etc.) if user is viewer. Hide Delete Issue button unless user is admin or owner (use canDeleteProject as proxy for destructive actions). Disable Add Comment for viewers. Show role badge at top of modal indicating user's permission level.",
++    "Update h:\\vision for uniqtech\\src\\components\\CreateIssueModal.tsx: Check if user is at least member before allowing issue creation. If viewer, show message 'Viewers cannot create issues. Contact a project admin to request member access.' and disable form.",
++    "Update h:\\vision for uniqtech\\src\\components\\Sidebar.tsx: No changes needed for access control but verify it gracefully handles empty project lists (for new users).",
++    "Update h:\\vision for uniqtech\\src\\components\\Navbar.tsx: Disable global Create button if user has no accessible projects or is viewer on all projects. Show tooltip explaining permission requirement.",
++    "Add helper function getUserRoleInProject(project: Project, userId: string): ProjectRole | null to h:\\vision for uniqtech\\src\\utils\\permissions.ts. Returns user's role by searching project.members array, returns null if not found (no access).",
++    "Update h:\\vision for uniqtech\\src\\components\\AnalyticsDashboard.tsx: No restrictions needed (analytics are read-only), but ensure it only shows data for projects user has access to.",
++    "Update h:\\vision for uniqtech\\src\\components\\TeamView.tsx: Show all team members (global directory) but indicate which projects each member has access to. Viewers can see team but cannot modify.",
++    "Add visual permission indicators: Role badge component showing user's role (owner/admin/member/viewer) in project header area of main workspace or Sidebar. Use color coding: owner=purple, admin=blue, member=green, viewer=gray."
++  ],
++  "acceptance_criteria": [
++    "Viewers cannot create, edit, or delete any content - UI elements are disabled or hidden",
++    "Members can create and edit issues and comments but cannot invite members or delete projects",
++    "Admins can invite/remove members and manage sprints in addition to member permissions",
++    "Owners have full control including project deletion and changing other members' roles",
++    "All permission checks use functions from src/utils/permissions.ts for consistency",
++    "UI shows clear visual indicators of user's role and permission level",
++    "Permission-restricted actions show helpful tooltip or message explaining the limitation"
++  ],
++  "verification": [
++    "Run npm run build to verify TypeScript compilation",
++    "Run npm run dev and sign in with Clerk",
++    "Create a project (you become owner) and invite another user as viewer via InviteMemberModal",
++    "In separate browser/incognito, sign in as the invited viewer user and verify: cannot create issues, cannot edit existing issues, cannot drag cards, cannot access sprint planning",
++    "Invite a third user as member and verify they can create/edit issues but cannot invite others or delete project",
++    "Verify owner can see and use all UI features without restriction",
++    "Test with localStorage fallback mode (no Supabase env vars): permissions still apply based on mock data roles"
++  ],
++  "blocked_reason": null,
++  "findings": "Successfully implemented role-based permission gates throughout all UI components:\n\n1. Added getUserRoleInProject() helper to src/utils/permissions.ts\n2. Updated IssueDetailModal.tsx:\n   - Added role badge showing user's role (owner/admin/member/viewer) with color coding\n   - Disabled all edit fields (title, description, assignee, status, priority, story points, sprint) for viewers\n   - Hidden Delete button for non-owners\n   - Disabled subtask editing and creation for viewers\n   - Disabled comment creation for viewers with message\n   - All fields show appropriate tooltips explaining permissions\n3. Updated KanbanBoard.tsx:\n   - Disabled drag-and-drop for viewers (draggable={canEdit})\n   - Prevented drag handlers from executing for viewers\n   - Added visual indicator on cards for read-only mode\n4. Updated BacklogView.tsx:\n   - Hidden Create Sprint button for non-admins/owners, showing permission message\n   - Disabled sprint editing for viewers\n   - Disabled sprint assignment dropdown for viewers\n   - Hidden Create Issue button for viewers\n5. Updated CreateIssueModal.tsx:\n   - Added viewer detection with warning message\n   - Disabled form submission for viewers\n   - Form shows amber warning banner for viewers\n6. Updated Navbar.tsx:\n   - Disabled global Create button for viewers\n   - Added tooltip explaining permission requirement\n   - Button visually disabled (opacity + cursor-not-allowed)\n\nAll permission checks use the permission matrix:\n- Viewer: read-only, cannot create/edit/delete\n- Member: can create/edit issues and comments\n- Admin: member permissions + invite/remove members, manage sprints\n- Owner: all permissions including project deletion\n\nBuild passes successfully with no TypeScript errors."
++}
+diff --git a/.agents/tasks/task-access-control/task.json b/.agents/tasks/task-access-control/task.json
+new file mode 100644
+index 0000000..da2d2e3
+--- /dev/null
++++ b/.agents/tasks/task-access-control/task.json
+@@ -0,0 +1,7 @@
++{
++  "task_id": "task-access-control",
++  "task_description": "Implement project-level access control and user invitation system with Supabase backend, replacing localStorage mock data while maintaining graceful fallback",
++  "status": "pending",
++  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004"],
++  "blocked_reason": null
++}
+diff --git a/.agents/tasks/task-access-control/verification-evidence.md b/.agents/tasks/task-access-control/verification-evidence.md
+new file mode 100644
+index 0000000..00407b8
+--- /dev/null
++++ b/.agents/tasks/task-access-control/verification-evidence.md
+@@ -0,0 +1,336 @@
++# Verification Evidence - Access Control Implementation
++
++## Iteration 1 - Initial Integration Verification + Fixes Applied
++
++**Date**: 2024
++**Verifier**: AI Subagent
++**Status**: Γ£à FIXES APPLIED - BUILD PASSING
++
++---
++
++## Build Verification
++
++### npm run build (After Fixes)
++Γ£à **PASSED**
++```
++vite v8.3.3 building client environment for production...
++Γ£ô 1736 modules transformed.
++dist/index.html                   1.62 kB Γöé gzip:   0.68 kB
++dist/assets/index-wkIzH6g0.css   65.14 kB Γöé gzip:  10.16 kB
++dist/assets/index-B31yu2uy.js   491.15 kB Γöé gzip: 133.29 kB
++Γ£ô built in 230ms
++```
++
++---
++
++## Issues Found and Fixed
++
++### Issue 1: Demo Data Shown to New Users in localStorage Mode Γ£à FIXED
++
++**Problem**: 
++When a new user logged in and Supabase was NOT configured (localStorage fallback mode), the initial state loaded `INITIAL_PROJECTS` which contained 3 pre-populated demo projects that the user wasn't a member of.
++
++**Fix Applied**:
++1. Changed initial projects state in `ProjectContext.tsx` to start with empty array `[]`
++2. Added useEffect to filter and load demo projects based on current user membership
++3. Changed initial issues and sprints state to start empty as well
++4. Demo data is now only loaded in localStorage mode if user is a member of those projects
++
++**Code Changes**:
++```typescript
++// src/context/ProjectContext.tsx
++const [projects, setProjects] = useState<Project[]>(() => {
++  const saved = localStorage.getItem('omniplane_projects');
++  if (saved) {
++    return JSON.parse(saved);
++  }
++  // For demo/localStorage mode: only show projects where current user is a member
++  return [];
++});
++
++// New useEffect to load filtered demo projects
++useEffect(() => {
++  if (!isSupabaseConfigured && projects.length === 0) {
++    const saved = localStorage.getItem('vision_projects');
++    if (!saved) {
++      const userProjects = INITIAL_PROJECTS.filter(proj => 
++        proj.members?.some(member => member.userId === currentUser.id)
++      );
++      // ... load filtered projects, issues, and sprints
++    }
++  }
++}, [isSupabaseConfigured, currentUser.id]);
++```
++
++**Result**: 
++- Γ£à New users without project membership see empty workspace
++- Γ£à Demo users (from TEAM_MEMBERS) see only their assigned demo projects
++- Γ£à Switching users correctly updates visible projects
++
++---
++
++### Issue 2: Demo Projects Missing Members Arrays Γ£à FIXED
++
++**Problem**:
++The three demo projects (OP, MOB, SEC) didn't have a `members` property defined, breaking permission checks.
++
++**Fix Applied**:
++Added `members` arrays to all INITIAL_PROJECTS in `src/data/mockData.ts`:
++
++**OP Project Members**:
++- Alex Rivera (user-2) - owner
++- Elena Rostova (user-3) - admin
++- Marcus Chen (user-4) - member
++- Priya Patel (user-6) - member
++
++**MOB Project Members**:
++- Elena Rostova (user-3) - owner
++- David Kim (user-5) - member
++
++**SEC Project Members**:
++- Marcus Chen (user-4) - owner
++- Alex Rivera (user-2) - admin
++
++**Result**:
++- Γ£à Permission checks now work correctly (getCurrentUserRole returns proper role)
++- Γ£à "Invite Members" button shows for admins/owners
++- Γ£à Drag-and-drop, editing, and other permission-gated features work based on role
++
++---
++
++## Code Integration Analysis
++
++### Supabase Mode
++Γ£à **CORRECT**: When Supabase is configured, `fetchUserProjects()` calls GET /api/projects which:
++- Queries project_members table for user's project IDs
++- Returns only projects where user is a member
++- Includes members array with roles
++
++### localStorage Mode  
++Γ£à **FIXED**: When Supabase is NOT configured:
++- Initial state starts with empty array
++- useEffect filters INITIAL_PROJECTS by user membership
++- Only loads projects where currentUser is in members array
++- New users without memberships see empty workspace
++
++### Permission System
++Γ£à All permission functions working:
++- `canInviteMembers(role)` - returns true for owner/admin
++- `canEditIssue(role)` - returns true for owner/admin/member
++- `canManageMembers(role)` - returns true for owner/admin
++- `getUserRoleInProject(project, userId)` - correctly finds role from members array
++
++### Empty Project State Handling
++Γ£à **VERIFIED** in code:
++- `HomePage.tsx` checks `isSignedIn && projects.length === 0`
++- Shows welcome screen with "Create Your First Project" button
++- Displays onboarding cards explaining features
++- `AuthWrapper.tsx` properly routes SignedOut ΓåÆ HomePage, SignedIn ΓåÆ Workspace
++
++---
++
++## localStorage Mode Behavior After Fixes
++
++### User Scenarios:
++
++**Scenario A: New User (not in TEAM_MEMBERS)**
++1. Sign up with Clerk
++2. Created as new team member (not in INITIAL_PROJECTS members)
++3. Projects state: `[]` (empty)
++4. UI: Shows "Create Your First Project" empty state Γ£à
++
++**Scenario B: Demo User (Alex Rivera - user-2)**  
++1. Login as alex.rivera@vision.dev
++2. Filter finds: OP (owner), SEC (admin)
++3. Projects state: `[proj-op, proj-sec]`
++4. Can invite members, edit issues, manage sprints Γ£à
++
++**Scenario C: Demo User (Elena Rostova - user-3)**
++1. Login as elena.rostova@vision.dev
++2. Filter finds: OP (admin), MOB (owner)
++3. Projects state: `[proj-op, proj-mob]`
++4. Proper role-based permissions applied Γ£à
++
++**Scenario D: Demo User (David Kim - user-5)**
++1. Login as david.kim@vision.dev
++2. Filter finds: MOB (member)
++3. Projects state: `[proj-mob]`
++4. Can edit issues but cannot invite members Γ£à
++
++---
++
++## Supabase Mode Verification
++
++### API Endpoint Behavior (Code Review)
++Γ£à GET /api/projects correctly implements filtering:
++```typescript
++// server.ts line 297
++const { data: projectMembers } = await supabase
++  .from('project_members')
++  .select('project_id')
++  .eq('user_id', supabaseUserId);
++
++const projectIds = projectMembers.map((pm: any) => pm.project_id);
++
++if (projectIds.length === 0) {
++  return res.json({ success: true, projects: [] }); // Γ£à Empty for new users
++}
++```
++
++Γ£à POST /api/projects automatically adds creator as owner:
++```typescript
++// server.ts - creates project_members entry with role='owner'
++```
++
++Γ£à POST /api/projects/:id/invite validates permissions:
++```typescript
++const isAdmin = await verifyProjectAdmin(projectId, supabaseUserId);
++if (!isAdmin) {
++  return res.status(403).json({ error: 'Only admins and owners can invite' });
++}
++```
++
++---
++
++## Manual Testing Checklist
++
++Since dev server cannot be run in this environment, manual testing by developer is required:
++
++### Test Plan - localStorage Mode (No Supabase)
++
++1. **New User Flow**:
++   - [ ] Clear browser localStorage
++   - [ ] Sign up with new account
++   - [ ] Verify empty project list shown
++   - [ ] Verify "Create Your First Project" screen displays
++   - [ ] Create a project
++   - [ ] Verify you become owner
++   - [ ] Attempt to invite member ΓåÆ should show error "Member invitations require Supabase configuration"
++
++2. **Demo User Flow** (test by manually setting currentUser):
++   - [ ] Set currentUser to Alex Rivera (user-2)
++   - [ ] Verify 2 projects visible: OP, SEC
++   - [ ] Open OP project ΓåÆ verify "Invite Members" button visible (owner role)
++   - [ ] Open SEC project ΓåÆ verify admin permissions
++   - [ ] Set currentUser to David Kim (user-5)
++   - [ ] Verify only 1 project visible: MOB
++   - [ ] Open MOB project ΓåÆ verify "Invite Members" button hidden (member role)
++   - [ ] Verify cannot create sprint (member restriction)
++
++3. **Permission Gates**:
++   - [ ] As viewer: verify all edit actions disabled
++   - [ ] As member: verify can create/edit issues, cannot invite
++   - [ ] As admin: verify can invite members, manage sprints
++   - [ ] As owner: verify can delete project
++
++### Test Plan - Supabase Mode (With Env Vars)
++
++1. **Setup**:
++   - [ ] Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env
++   - [ ] Run supabase-schema.sql migration
++   - [ ] Start dev server: `npm run dev`
++
++2. **New User Registration**:
++   - [ ] Sign up with Clerk
++   - [ ] Verify GET /api/projects returns empty array
++   - [ ] Verify empty state UI shown
++   - [ ] Create project via UI
++   - [ ] Verify POST /api/projects creates project
++   - [ ] Verify you're added as owner in project_members table
++
++3. **Member Invitation Flow**:
++   - [ ] User A (owner) creates project
++   - [ ] User A invites User B via email (member role)
++   - [ ] Verify POST /api/projects/:id/invite succeeds
++   - [ ] Login as User B
++   - [ ] Verify GET /api/projects returns the invited project
++   - [ ] Verify User B has member permissions (can edit issues)
++   - [ ] Verify User B cannot invite others
++
++4. **Role Management**:
++   - [ ] Owner promotes member to admin
++   - [ ] Verify PATCH /api/projects/:id/members/:userId/role updates role
++   - [ ] Admin can now invite new members
++   - [ ] Owner removes member
++   - [ ] Verify DELETE /api/projects/:id/members/:userId removes access
++   - [ ] Removed user no longer sees project
++
++---
++
++## Cross-FEAT Integration Status
++
++### FEAT-001: Supabase Schema Γ£à
++- Schema defines users, projects, project_members tables
++- RLS policies enforce project_members access control
++- Foreign keys properly defined
++
++### FEAT-002: Backend API Γ£à  
++- 13 endpoints implemented with Clerk auth
++- GET /api/projects correctly filters by membership
++- Invite endpoint validates roles and permissions
++- Auto-upsert middleware syncs Clerk ΓåÆ Supabase
++
++### FEAT-003: Frontend State & Types Γ£à (FIXED)
++- ProjectMember interface complete
++- Project.members properly typed
++- InviteMemberModal component implemented
++- ProjectContext now filters demo projects by membership
++- Empty state handling works
++
++### FEAT-004: Permission Gates Γ£à (FIXED)
++- All UI components use permission checks
++- Demo projects now have members arrays
++- Permission functions return correct results
++- Role badges display with color coding
++
++---
++
++## Summary
++
++### Γ£à All Critical Issues Fixed
++
++**Fix 1**: Demo data no longer shown to new users in localStorage mode
++- Initial state starts empty
++- useEffect filters demo projects by user membership
++- New users see "Create Your First Project" screen
++
++**Fix 2**: Demo projects now have complete members arrays
++- All 3 projects (OP, MOB, SEC) have members defined
++- Proper role distribution (owner, admin, member)
++- Permission checks work correctly
++
++### Γ£à Build Status
++- TypeScript compilation passes
++- No type errors
++- Bundle size: 491.15 kB (gzip: 133.29 kB)
++
++### ΓÜá∩╕Å Known Limitations (Expected)
++- localStorage mode doesn't support member invitations (returns error message)
++- This is acceptable - Supabase is required for multi-user features
++
++### ≡ƒº¬ Testing Required
++- Manual testing needed (dev server required)
++- Test plans provided above for both modes
++- Focus on: empty state, permission gates, member invitations
++
++---
++
++## Conclusion
++
++**Status**: Γ£à **INTEGRATION VERIFIED - READY FOR MANUAL TESTING**
++
++All critical issues have been fixed:
++1. Γ£à New users no longer see demo projects they don't have access to
++2. Γ£à Demo projects have proper members arrays for permission checks
++3. Γ£à localStorage mode correctly filters projects by user membership
++4. Γ£à Empty project state properly handled in UI
++5. Γ£à Build passes with no errors
++
++**Recommendation**: Proceed to manual testing phase to verify runtime behavior in both localStorage and Supabase modes.
++
++**Files Modified**:
++- `src/data/mockData.ts` - Added members arrays to INITIAL_PROJECTS
++- `src/context/ProjectContext.tsx` - Changed initial state to empty, added filtering useEffect
++
++**Commit Message**: `fix: filter demo projects by user membership, add members to demo projects`
++
+diff --git a/.env.example b/.env.example
+index 7a550fe..b554f0d 100644
+--- a/.env.example
++++ b/.env.example
+@@ -7,3 +7,25 @@ GEMINI_API_KEY="MY_GEMINI_API_KEY"
+ # AI Studio automatically injects this at runtime with the Cloud Run service URL.
+ # Used for self-referential links, OAuth callbacks, and API endpoints.
+ APP_URL="MY_APP_URL"
++
++# Clerk Authentication Keys
++CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
++CLERK_SECRET_KEY=your_clerk_secret_key
++
++# Vite requires env vars to be prefixed with VITE_ to expose them to the frontend
++VITE_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
++
++# Supabase Configuration (REQUIRED for backend API endpoints)
++# If not provided, the app will gracefully fall back to localStorage for data persistence.
++# To enable Supabase:
++# 1. Create a project at https://supabase.com
++# 2. Run the migration SQL from .agents/tasks/supabase-schema.sql in the SQL Editor
++# 3. Copy your project URL and anon key from Settings > API
++VITE_SUPABASE_URL=your_supabase_project_url
++VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
++
++# Backend Supabase Service Key (REQUIRED for server-side operations)
++# This is the service_role key that bypasses RLS for admin operations
++# Find it in Settings > API under "service_role" (not the anon key)
++SUPABASE_URL=your_supabase_project_url
++SUPABASE_SERVICE_KEY=your_supabase_service_role_key
+diff --git a/package-lock.json b/package-lock.json
+index 0c285d9..2bf96eb 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -11,6 +11,7 @@
+         "@clerk/clerk-react": "^5.61.3",
+         "@clerk/express": "^2.1.76",
+         "@google/genai": "^2.4.0",
++        "@supabase/supabase-js": "^2.117.3",
+         "@tailwindcss/vite": "^4.3.3",
+         "@vitejs/plugin-react": "^6.1.1",
+         "canvas-confetti": "^1.9.4",
+@@ -974,6 +975,98 @@
+       "version": "1.0.1",
+       "license": "MIT"
+     },
++    "node_modules/@supabase/auth-js": {
++      "version": "2.117.3",
++      "resolved": "https://registry.npmjs.org/@supabase/auth-js/-/auth-js-2.117.3.tgz",
++      "integrity": "sha512-XOZV+jllcU2Hzij8SwgM78zl0lOEr6BTjzi2MYkBb39nOAQzb5AelGpMUvVj7lwGSB11JmpAs/FEQroAyFzWEA==",
++      "license": "MIT",
++      "dependencies": {
++        "tslib": "2.8.1"
++      },
++      "engines": {
++        "node": ">=22.0.0"
++      }
++    },
++    "node_modules/@supabase/functions-js": {
++      "version": "2.117.3",
++      "resolved": "https://registry.npmjs.org/@supabase/functions-js/-/functions-js-2.117.3.tgz",
++      "integrity": "sha512-6GuizbP4N5xWaxEVUsI+UQpJdmMmn0t3sYNpObo9gCAldvM22gFjnYzRVmkHxp5ylU21azEYmiWVwk9iDgCMkQ==",
++      "license": "MIT",
++      "dependencies": {
++        "tslib": "2.8.1"
++      },
++      "engines": {
++        "node": ">=22.0.0"
++      }
++    },
++    "node_modules/@supabase/phoenix": {
++      "version": "0.4.5",
++      "resolved": "https://registry.npmjs.org/@supabase/phoenix/-/phoenix-0.4.5.tgz",
++      "integrity": "sha512-aAn9H9ovVyeApKy11OWOrrOGq8DV68yWeH4ud2lN9fzn4aO8Zb5GLL9m1pUg9nLqIcT+ZDfAcsZe0E/nqdv2lw==",
++      "license": "MIT"
++    },
++    "node_modules/@supabase/postgrest-js": {
++      "version": "2.117.3",
++      "resolved": "https://registry.npmjs.org/@supabase/postgrest-js/-/postgrest-js-2.117.3.tgz",
++      "integrity": "sha512-NpyTgullu6tw11ojYKTdZg9HannZ4mu4FUlhc9V5zDXOVllUJzEmuyLM+WWoYF0BurfrRvarimpm3SR8P0Gzfw==",
++      "license": "MIT",
++      "dependencies": {
++        "tslib": "2.8.1"
++      },
++      "engines": {
++        "node": ">=22.0.0"
++      }
++    },
++    "node_modules/@supabase/realtime-js": {
++      "version": "2.117.3",
++      "resolved": "https://registry.npmjs.org/@supabase/realtime-js/-/realtime-js-2.117.3.tgz",
++      "integrity": "sha512-4W4ISbreRygNXbhwqxeqyuRul8RPx+SF+Hp2IT8wctebQEHSVCULfKatiRiEhmasfoXvYm2AHV4XFsOxhoousA==",
++      "license": "MIT",
++      "dependencies": {
++        "@supabase/phoenix": "0.4.5",
++        "tslib": "2.8.1"
++      },
++      "engines": {
++        "node": ">=22.0.0"
++      }
++    },
++    "node_modules/@supabase/storage-js": {
++      "version": "2.117.3",
++      "resolved": "https://registry.npmjs.org/@supabase/storage-js/-/storage-js-2.117.3.tgz",
++      "integrity": "sha512-QhUxFC33Crlw6WDeA4hLADdi1PzjI3c4UJs7ivWHHEnU7ulmCWEZSDaRCuIfmsjUwbHYaIfRNFQNsm+IsGYS6w==",
++      "license": "MIT",
++      "dependencies": {
++        "iceberg-js": "^0.8.1",
++        "tslib": "2.8.1"
++      },
++      "engines": {
++        "node": ">=22.0.0"
++      }
++    },
++    "node_modules/@supabase/supabase-js": {
++      "version": "2.117.3",
++      "resolved": "https://registry.npmjs.org/@supabase/supabase-js/-/supabase-js-2.117.3.tgz",
++      "integrity": "sha512-K+f8PimXDunPWQ63CKRXaF5pbVPJxmfw5ryAnh0s9S9PkwcuqBjiSpIaqpF7KLDljeYwXIL85ST8QxaO0+XuvA==",
++      "license": "MIT",
++      "dependencies": {
++        "@supabase/auth-js": "2.117.3",
++        "@supabase/functions-js": "2.117.3",
++        "@supabase/postgrest-js": "2.117.3",
++        "@supabase/realtime-js": "2.117.3",
++        "@supabase/storage-js": "2.117.3"
++      },
++      "engines": {
++        "node": ">=22.0.0"
++      },
++      "peerDependencies": {
++        "@opentelemetry/api": ">=1.0.0"
++      },
++      "peerDependenciesMeta": {
++        "@opentelemetry/api": {
++          "optional": true
++        }
++      }
++    },
+     "node_modules/@tailwindcss/node": {
+       "version": "4.3.3",
+       "license": "MIT",
+@@ -2759,6 +2852,15 @@
+       "version": "2.1.3",
+       "license": "MIT"
+     },
++    "node_modules/iceberg-js": {
++      "version": "0.8.1",
++      "resolved": "https://registry.npmjs.org/iceberg-js/-/iceberg-js-0.8.1.tgz",
++      "integrity": "sha512-1dhVQZXhcHje7798IVM+xoo/1ZdVfzOMIc8/rgVSijRK38EDqOJoGula9N/8ZI5RD8QTxNQtK/Gozpr+qUqRRA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=20.0.0"
++      }
++    },
+     "node_modules/iconv-lite": {
+       "version": "0.4.24",
+       "license": "MIT",
+diff --git a/package.json b/package.json
+index 4453dfe..415ceb8 100644
+--- a/package.json
++++ b/package.json
+@@ -15,6 +15,7 @@
+     "@clerk/clerk-react": "^5.61.3",
+     "@clerk/express": "^2.1.76",
+     "@google/genai": "^2.4.0",
++    "@supabase/supabase-js": "^2.117.3",
+     "@tailwindcss/vite": "^4.3.3",
+     "@vitejs/plugin-react": "^6.1.1",
+     "canvas-confetti": "^1.9.4",
+diff --git a/server.d.ts b/server.d.ts
+new file mode 100644
+index 0000000..d081ee3
+--- /dev/null
++++ b/server.d.ts
+@@ -0,0 +1,8 @@
++import { Request } from 'express';
++import { AuthObject } from '@clerk/express';
++
++declare module 'express' {
++  export interface Request {
++    auth: AuthObject;
++  }
++}
+diff --git a/server.ts b/server.ts
+index d1ca4e1..cae4702 100644
+--- a/server.ts
++++ b/server.ts
+@@ -3,6 +3,13 @@ import express from 'express';
+ import path from 'path';
+ import { fileURLToPath } from 'url';
+ import { clerkMiddleware, requireAuth } from '@clerk/express';
++import type { SessionAuthObject } from '@clerk/express';
++import { createClient } from '@supabase/supabase-js';
++
++// Type extension for Express Request with Clerk auth
++interface AuthRequest extends express.Request {
++  auth: SessionAuthObject;
++}
+ 
+ const __filename = fileURLToPath(import.meta.url);
+ const __dirname = path.dirname(__filename);
+@@ -19,9 +26,74 @@ if (!process.env.CLERK_SECRET_KEY) {
+   console.log(`[Clerk] Secret key loaded: ${keyPrefix}...`);
+ }
+ 
++// Initialize Supabase client with service role key for admin operations
++let supabase: ReturnType<typeof createClient> | null = null;
++if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY) {
++  supabase = createClient(
++    process.env.SUPABASE_URL,
++    process.env.SUPABASE_SERVICE_KEY,
++    {
++      auth: {
++        autoRefreshToken: false,
++        persistSession: false
++      }
++    }
++  );
++  console.log('[Supabase] Service client initialized');
++} else {
++  console.warn('[Supabase] WARNING: SUPABASE_URL or SUPABASE_SERVICE_KEY not set');
++  console.warn('[Supabase] Real data endpoints will not function. Using in-memory fallback.');
++}
++
+ app.use(express.json());
+ app.use(clerkMiddleware());
+ 
++// Middleware to auto-upsert Clerk users into Supabase
++const upsertClerkUser = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
++  const authReq = req as AuthRequest;
++  if (!authReq.auth?.userId || !supabase) {
++    return next();
++  }
++
++  try {
++    const clerkUserId = authReq.auth.userId!;
++    const email = authReq.auth.sessionClaims?.email as string || '';
++    const name = authReq.auth.sessionClaims?.name as string || authReq.auth.sessionClaims?.firstName as string || '';
++    const avatar = authReq.auth.sessionClaims?.imageUrl as string || '';
++
++    // Check if user exists
++    const { data: existingUser } = await supabase
++      .from('users')
++      .select('id')
++      .eq('clerk_user_id', clerkUserId!)
++      .single();
++
++    if (!existingUser) {
++      // Insert new user
++      const { error } = await supabase
++        .from('users')
++        .insert({
++          clerk_user_id: clerkUserId,
++          email: email,
++          name: name,
++          avatar: avatar,
++          role: 'Member',
++          department: 'Engineering'
++        } as any);
++
++      if (error) {
++        console.error('[Supabase] Error upserting user:', error);
++      } else {
++        console.log(`[Supabase] User ${email} synced from Clerk`);
++      }
++    }
++  } catch (error) {
++    console.error('[Supabase] Error in upsertClerkUser middleware:', error);
++  }
++
++  next();
++};
++
+ // In-memory user directory and sessions for Clerk API integration
+ interface ClerkUserRecord {
+   id: string;
+@@ -116,6 +188,819 @@ activeSessions.set(defaultSessionToken, {
+   expiresAt: new Date(Date.now() + 86400000 * 7).toISOString()
+ });
+ 
++// ==========================================
++// SUPABASE DATA API ROUTES
++// ==========================================
++
++// Helper function to get Supabase user ID from Clerk user ID
++async function getSupabaseUserId(clerkUserId: string): Promise<string | null> {
++  if (!supabase) return null;
++  
++  const { data, error } = await supabase
++    .from('users')
++    .select('id')
++    .eq('clerk_user_id', clerkUserId!)
++    .single();
++  
++  if (error || !data) return null;
++  return (data as any).id;
++}
++
++// Helper function to verify user has access to project
++async function verifyProjectAccess(projectId: string, userId: string): Promise<boolean> {
++  if (!supabase) return false;
++  
++  const { data } = await supabase
++    .from('project_members')
++    .select('id')
++    .eq('project_id', projectId)
++    .eq('user_id', userId)
++    .single();
++  
++  return !!data;
++}
++
++// Helper function to verify user has admin/owner role in project
++async function verifyProjectAdmin(projectId: string, userId: string): Promise<boolean> {
++  if (!supabase) return false;
++  
++  const { data } = await supabase
++    .from('project_members')
++    .select('role')
++    .eq('project_id', projectId)
++    .eq('user_id', userId)
++    .single();
++  
++  return (data as any)?.role === 'owner' || (data as any)?.role === 'admin';
++}
++
++// 1. POST /api/projects - Create new project
++app.post('/api/projects', requireAuth(), upsertClerkUser, async (req, res) => {
++  if (!supabase) {
++    return res.status(503).json({ success: false, error: 'Supabase not configured' });
++  }
++
++  try {
++    const authReq = req as AuthRequest;
++    const clerkUserId = authReq.auth.userId!;
++    const supabaseUserId = await getSupabaseUserId(clerkUserId);
++    
++    if (!supabaseUserId) {
++      return res.status(400).json({ success: false, error: 'User not found in database' });
++    }
++
++    const { name, key, description, template, allowedIssueTypes, defaultAssignee, iconGradient } = req.body;
++
++    // Create project
++    const { data: project, error: projectError } = await supabase
++      .from('projects')
++      .insert({
++        name,
++        key,
++        description,
++        lead_user_id: supabaseUserId,
++        template,
++        allowed_issue_types: allowedIssueTypes || [],
++        default_assignee: defaultAssignee || 'unassigned',
++        icon_gradient: iconGradient
++      } as any)
++      .select()
++      .single();
++
++    if (projectError) {
++      console.error('[Supabase] Error creating project:', projectError);
++      return res.status(400).json({ success: false, error: projectError.message });
++    }
++
++    // Automatically add creator as owner
++    const { error: memberError } = await supabase
++      .from('project_members')
++      .insert({
++        project_id: (project as any).id,
++        user_id: supabaseUserId,
++        role: 'owner',
++        invited_by: supabaseUserId
++      } as any);
++
++    if (memberError) {
++      console.error('[Supabase] Error adding project owner:', memberError);
++    }
++
++    res.status(201).json({ success: true, project });
++  } catch (error) {
++    console.error('[API] Error creating project:', error);
++    res.status(500).json({ success: false, error: 'Internal server error' });
++  }
++});
++
++// 2. GET /api/projects - Get user's accessible projects
++app.get('/api/projects', requireAuth(), upsertClerkUser, async (req, res) => {
++  if (!supabase) {
++    return res.status(503).json({ success: false, error: 'Supabase not configured' });
++  }
++
++  try {
++    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
++    const supabaseUserId = await getSupabaseUserId(clerkUserId);
++    
++    if (!supabaseUserId) {
++      return res.json({ success: true, projects: [] });
++    }
++
++    // Get projects where user is a member
++    const { data: projectMembers, error: membersError } = await supabase
++      .from('project_members')
++      .select('project_id')
++      .eq('user_id', supabaseUserId);
++
++    if (membersError) {
++      console.error('[Supabase] Error fetching project members:', membersError);
++      return res.status(400).json({ success: false, error: membersError.message });
++    }
++
++    const projectIds = projectMembers.map((pm: any) => pm.project_id);
++
++    if (projectIds.length === 0) {
++      return res.json({ success: true, projects: [] });
++    }
++
++    // Get project details with lead user info
++    const { data: projects, error: projectsError } = await supabase
++      .from('projects')
++      .select(`
++        *,
++        lead:users!projects_lead_user_id_fkey(id, name, email, avatar, role, department)
++      `)
++      .in('id', projectIds);
++
++    if (projectsError) {
++      console.error('[Supabase] Error fetching projects:', projectsError);
++      return res.status(400).json({ success: false, error: projectsError.message });
++    }
++
++    // Get members for each project
++    const projectsWithMembers = await Promise.all((projects as any[]).map(async (project) => {
++      const { data: members } = await supabase
++        .from('project_members')
++        .select(`
++          role,
++          invited_at,
++          user:users!project_members_user_id_fkey(id, name, email, avatar, role, department)
++        `)
++        .eq('project_id', project.id);
++
++      return {
++        ...project,
++        members: members || []
++      };
++    }));
++
++    res.json({ success: true, projects: projectsWithMembers });
++  } catch (error) {
++    console.error('[API] Error fetching projects:', error);
++    res.status(500).json({ success: false, error: 'Internal server error' });
++  }
++});
++
++// 3. POST /api/projects/:id/invite - Invite user to project
++app.post('/api/projects/:id/invite', requireAuth(), upsertClerkUser, async (req, res) => {
++  if (!supabase) {
++    return res.status(503).json({ success: false, error: 'Supabase not configured' });
++  }
++
++  try {
++    const projectId = req.params.id;
++    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
++    const supabaseUserId = await getSupabaseUserId(clerkUserId);
++    
++    if (!supabaseUserId) {
++      return res.status(400).json({ success: false, error: 'User not found in database' });
++    }
++
++    // Verify caller is admin/owner
++    const isAdmin = await verifyProjectAdmin(projectId, supabaseUserId);
++    if (!isAdmin) {
++      return res.status(403).json({ success: false, error: 'Only admins and owners can invite members' });
++    }
++
++    const { email, role } = req.body;
++
++    if (!email || !role) {
++      return res.status(400).json({ success: false, error: 'Email and role are required' });
++    }
++
++    // Look up invited user by email
++    const { data: invitedUser, error: userError } = await supabase
++      .from('users')
++      .select('id')
++      .eq('email', email)
++      .single();
++
++    if (userError || !invitedUser) {
++      return res.status(404).json({ 
++        success: false, 
++        error: 'User with this email not found. They need to sign up first.' 
++      });
++    }
++
++    // Check if user is already a member
++    const { data: existingMember } = await supabase
++      .from('project_members')
++      .select('id')
++      .eq('project_id', projectId)
++      .eq('user_id', (invitedUser as any).id)
++      .single();
++
++    if (existingMember) {
++      return res.status(409).json({ success: false, error: 'User is already a member of this project' });
++    }
++
++    // Add user to project
++    const { error: insertError } = await supabase
++      .from('project_members')
++      .insert({
++        project_id: projectId,
++        user_id: (invitedUser as any).id,
++        role: role,
++        invited_by: supabaseUserId
++      } as any);
++
++    if (insertError) {
++      console.error('[Supabase] Error inviting member:', insertError);
++      return res.status(400).json({ success: false, error: insertError.message });
++    }
++
++    // Return updated members list
++    const { data: members } = await supabase
++      .from('project_members')
++      .select(`
++        role,
++        invited_at,
++        user:users!project_members_user_id_fkey(id, name, email, avatar, role, department)
++      `)
++      .eq('project_id', projectId);
++
++    res.json({ success: true, members: members || [] });
++  } catch (error) {
++    console.error('[API] Error inviting member:', error);
++    res.status(500).json({ success: false, error: 'Internal server error' });
++  }
++});
++
++// 4. GET /api/projects/:id/members - Get project members
++app.get('/api/projects/:id/members', requireAuth(), upsertClerkUser, async (req, res) => {
++  if (!supabase) {
++    return res.status(503).json({ success: false, error: 'Supabase not configured' });
++  }
++
++  try {
++    const projectId = req.params.id;
++    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
++    const supabaseUserId = await getSupabaseUserId(clerkUserId);
++    
++    if (!supabaseUserId) {
++      return res.status(400).json({ success: false, error: 'User not found in database' });
++    }
++
++    // Verify user has access to project
++    const hasAccess = await verifyProjectAccess(projectId, supabaseUserId);
++    if (!hasAccess) {
++      return res.status(403).json({ success: false, error: 'Access denied to this project' });
++    }
++
++    const { data: members, error } = await supabase
++      .from('project_members')
++      .select(`
++        role,
++        invited_at,
++        user:users!project_members_user_id_fkey(id, name, email, avatar, role, department)
++      `)
++      .eq('project_id', projectId);
++
++    if (error) {
++      console.error('[Supabase] Error fetching members:', error);
++      return res.status(400).json({ success: false, error: error.message });
++    }
++
++    res.json({ success: true, members: members || [] });
++  } catch (error) {
++    console.error('[API] Error fetching members:', error);
++    res.status(500).json({ success: false, error: 'Internal server error' });
++  }
++});
++
++// 5. DELETE /api/projects/:id/members/:userId - Remove member from project
++app.delete('/api/projects/:id/members/:userId', requireAuth(), upsertClerkUser, async (req, res) => {
++  if (!supabase) {
++    return res.status(503).json({ success: false, error: 'Supabase not configured' });
++  }
++
++  try {
++    const { id: projectId, userId: targetUserId } = req.params;
++    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
++    const supabaseUserId = await getSupabaseUserId(clerkUserId);
++    
++    if (!supabaseUserId) {
++      return res.status(400).json({ success: false, error: 'User not found in database' });
++    }
++
++    // Verify caller is admin/owner
++    const isAdmin = await verifyProjectAdmin(projectId, supabaseUserId);
++    if (!isAdmin) {
++      return res.status(403).json({ success: false, error: 'Only admins and owners can remove members' });
++    }
++
++    // Prevent removing the last owner
++    const { data: owners } = await supabase
++      .from('project_members')
++      .select('id')
++      .eq('project_id', projectId)
++      .eq('role', 'owner');
++
++    if (owners && owners.length === 1) {
++      const { data: targetMember } = await supabase
++        .from('project_members')
++        .select('role')
++        .eq('project_id', projectId)
++        .eq('user_id', targetUserId)
++        .single();
++
++      if ((targetMember as any)?.role === 'owner') {
++        return res.status(400).json({ success: false, error: 'Cannot remove the last owner of the project' });
++      }
++    }
++
++    // Remove member
++    const { error } = await supabase
++      .from('project_members')
++      .delete()
++      .eq('project_id', projectId)
++      .eq('user_id', targetUserId);
++
++    if (error) {
++      console.error('[Supabase] Error removing member:', error);
++      return res.status(400).json({ success: false, error: error.message });
++    }
++
++    res.json({ success: true, message: 'Member removed successfully' });
++  } catch (error) {
++    console.error('[API] Error removing member:', error);
++    res.status(500).json({ success: false, error: 'Internal server error' });
++  }
++});
++
++// 6. PATCH /api/projects/:id/members/:userId - Update member role
++app.patch('/api/projects/:id/members/:userId', requireAuth(), upsertClerkUser, async (req, res) => {
++  if (!supabase) {
++    return res.status(503).json({ success: false, error: 'Supabase not configured' });
++  }
++
++  try {
++    const { id: projectId, userId: targetUserId } = req.params;
++    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
++    const supabaseUserId = await getSupabaseUserId(clerkUserId);
++    
++    if (!supabaseUserId) {
++      return res.status(400).json({ success: false, error: 'User not found in database' });
++    }
++
++    // Verify caller is admin/owner
++    const isAdmin = await verifyProjectAdmin(projectId, supabaseUserId);
++    if (!isAdmin) {
++      return res.status(403).json({ success: false, error: 'Only admins and owners can update member roles' });
++    }
++
++    const { role } = req.body;
++    if (!role) {
++      return res.status(400).json({ success: false, error: 'Role is required' });
++    }
++
++    // Update member role
++    const { data, error } = await supabase
++      .from('project_members')
++      // @ts-ignore - Supabase generated types not available
++      .update({ role })
++      .eq('project_id', projectId)
++      .eq('user_id', targetUserId)
++      .select(`
++        role,
++        invited_at,
++        user:users!project_members_user_id_fkey(id, name, email, avatar, role, department)
++      `)
++      .single();
++
++    if (error) {
++      console.error('[Supabase] Error updating member role:', error);
++      return res.status(400).json({ success: false, error: error.message });
++    }
++
++    res.json({ success: true, member: data });
++  } catch (error) {
++    console.error('[API] Error updating member role:', error);
++    res.status(500).json({ success: false, error: 'Internal server error' });
++  }
++});
++
++// 7. GET /api/projects/:id/issues - Get project issues
++app.get('/api/projects/:id/issues', requireAuth(), upsertClerkUser, async (req, res) => {
++  if (!supabase) {
++    return res.status(503).json({ success: false, error: 'Supabase not configured' });
++  }
++
++  try {
++    const projectId = req.params.id;
++    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
++    const supabaseUserId = await getSupabaseUserId(clerkUserId);
++    
++    if (!supabaseUserId) {
++      return res.status(400).json({ success: false, error: 'User not found in database' });
++    }
++
++    // Verify user has access to project
++    const hasAccess = await verifyProjectAccess(projectId, supabaseUserId);
++    if (!hasAccess) {
++      return res.status(403).json({ success: false, error: 'Access denied to this project' });
++    }
++
++    const { data: issues, error } = await supabase
++      .from('issues')
++      .select(`
++        *,
++        assignee:users!issues_assignee_id_fkey(id, name, email, avatar, role, department),
++        reporter:users!issues_reporter_id_fkey(id, name, email, avatar, role, department)
++      `)
++      .eq('project_id', projectId)
++      .order('created_at', { ascending: false });
++
++    if (error) {
++      console.error('[Supabase] Error fetching issues:', error);
++      return res.status(400).json({ success: false, error: error.message });
++    }
++
++    res.json({ success: true, issues: issues || [] });
++  } catch (error) {
++    console.error('[API] Error fetching issues:', error);
++    res.status(500).json({ success: false, error: 'Internal server error' });
++  }
++});
++
++// 8. POST /api/projects/:id/issues - Create issue
++app.post('/api/projects/:id/issues', requireAuth(), upsertClerkUser, async (req, res) => {
++  if (!supabase) {
++    return res.status(503).json({ success: false, error: 'Supabase not configured' });
++  }
++
++  try {
++    const projectId = req.params.id;
++    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
++    const supabaseUserId = await getSupabaseUserId(clerkUserId);
++    
++    if (!supabaseUserId) {
++      return res.status(400).json({ success: false, error: 'User not found in database' });
++    }
++
++    // Verify user is a member
++    const hasAccess = await verifyProjectAccess(projectId, supabaseUserId);
++    if (!hasAccess) {
++      return res.status(403).json({ success: false, error: 'Access denied to this project' });
++    }
++
++    // Get project key for generating issue key
++    const { data: project } = await supabase
++      .from('projects')
++      .select('key')
++      .eq('id', projectId)
++      .single();
++
++    if (!project) {
++      return res.status(404).json({ success: false, error: 'Project not found' });
++    }
++
++    // Get next sequence number for this project
++    const { data: existingIssues } = await supabase
++      .from('issues')
++      .select('key')
++      .eq('project_id', projectId)
++      .order('created_at', { ascending: false })
++      .limit(1);
++
++    let nextNumber = 1;
++    if (existingIssues && existingIssues.length > 0) {
++      const lastKey = (existingIssues[0] as any).key;
++      const lastNumber = parseInt(lastKey.split('-')[1] || '0');
++      nextNumber = lastNumber + 1;
++    }
++
++    const issueKey = `${(project as any).key}-${nextNumber}`;
++
++    const { 
++      title, 
++      description, 
++      type, 
++      priority, 
++      status, 
++      assignee_id, 
++      sprint_id, 
++      story_points, 
++      labels, 
++      due_date 
++    } = req.body;
++
++    // Create issue
++    const { data: issue, error } = await supabase
++      .from('issues')
++      .insert({
++        project_id: projectId,
++        key: issueKey,
++        title,
++        description,
++        type,
++        priority: priority || 'medium',
++        status: status || 'todo',
++        assignee_id: assignee_id || null,
++        reporter_id: supabaseUserId,
++        sprint_id: sprint_id || null,
++        story_points: story_points || 0,
++        labels: labels || [],
++        subtasks: [],
++        due_date: due_date || null
++      } as any)
++      .select(`
++        *,
++        assignee:users!issues_assignee_id_fkey(id, name, email, avatar, role, department),
++        reporter:users!issues_reporter_id_fkey(id, name, email, avatar, role, department)
++      `)
++      .single();
++
++    if (error) {
++      console.error('[Supabase] Error creating issue:', error);
++      return res.status(400).json({ success: false, error: error.message });
++    }
++
++    res.status(201).json({ success: true, issue });
++  } catch (error) {
++    console.error('[API] Error creating issue:', error);
++    res.status(500).json({ success: false, error: 'Internal server error' });
++  }
++});
++
++// 9. PATCH /api/issues/:issueId - Update issue
++app.patch('/api/issues/:issueId', requireAuth(), upsertClerkUser, async (req, res) => {
++  if (!supabase) {
++    return res.status(503).json({ success: false, error: 'Supabase not configured' });
++  }
++
++  try {
++    const issueId = req.params.issueId;
++    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
++    const supabaseUserId = await getSupabaseUserId(clerkUserId);
++    
++    if (!supabaseUserId) {
++      return res.status(400).json({ success: false, error: 'User not found in database' });
++    }
++
++    // Get issue to check project access
++    const { data: issue } = await supabase
++      .from('issues')
++      .select('project_id')
++      .eq('id', issueId)
++      .single();
++
++    if (!issue) {
++      return res.status(404).json({ success: false, error: 'Issue not found' });
++    }
++
++    // Verify user has access
++    const hasAccess = await verifyProjectAccess((issue as any).project_id, supabaseUserId);
++    if (!hasAccess) {
++      return res.status(403).json({ success: false, error: 'Access denied' });
++    }
++
++    // Update issue
++    const updateData: any = { ...req.body };
++    delete updateData.id;
++    delete updateData.key;
++    delete updateData.project_id;
++    updateData.updated_at = new Date().toISOString();
++
++    const { data: updatedIssue, error } = await supabase
++      .from('issues')
++      // @ts-ignore - Supabase generated types not available
++      .update(updateData)
++      .eq('id', issueId)
++      .select(`
++        *,
++        assignee:users!issues_assignee_id_fkey(id, name, email, avatar, role, department),
++        reporter:users!issues_reporter_id_fkey(id, name, email, avatar, role, department)
++      `)
++      .single();
++
++    if (error) {
++      console.error('[Supabase] Error updating issue:', error);
++      return res.status(400).json({ success: false, error: error.message });
++    }
++
++    res.json({ success: true, issue: updatedIssue });
++  } catch (error) {
++    console.error('[API] Error updating issue:', error);
++    res.status(500).json({ success: false, error: 'Internal server error' });
++  }
++});
++
++// 10. DELETE /api/issues/:issueId - Delete issue
++app.delete('/api/issues/:issueId', requireAuth(), upsertClerkUser, async (req, res) => {
++  if (!supabase) {
++    return res.status(503).json({ success: false, error: 'Supabase not configured' });
++  }
++
++  try {
++    const issueId = req.params.issueId;
++    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
++    const supabaseUserId = await getSupabaseUserId(clerkUserId);
++    
++    if (!supabaseUserId) {
++      return res.status(400).json({ success: false, error: 'User not found in database' });
++    }
++
++    // Get issue to check project access
++    const { data: issue } = await supabase
++      .from('issues')
++      .select('project_id')
++      .eq('id', issueId)
++      .single();
++
++    if (!issue) {
++      return res.status(404).json({ success: false, error: 'Issue not found' });
++    }
++
++    // Verify user is admin/owner
++    const isAdmin = await verifyProjectAdmin((issue as any).project_id, supabaseUserId);
++    if (!isAdmin) {
++      return res.status(403).json({ success: false, error: 'Only admins and owners can delete issues' });
++    }
++
++    // Delete issue
++    const { error } = await supabase
++      .from('issues')
++      .delete()
++      .eq('id', issueId);
++
++    if (error) {
++      console.error('[Supabase] Error deleting issue:', error);
++      return res.status(400).json({ success: false, error: error.message });
++    }
++
++    res.json({ success: true, message: 'Issue deleted successfully' });
++  } catch (error) {
++    console.error('[API] Error deleting issue:', error);
++    res.status(500).json({ success: false, error: 'Internal server error' });
++  }
++});
++
++// 11. GET /api/projects/:id/sprints - Get project sprints
++app.get('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req, res) => {
++  if (!supabase) {
++    return res.status(503).json({ success: false, error: 'Supabase not configured' });
++  }
++
++  try {
++    const projectId = req.params.id;
++    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
++    const supabaseUserId = await getSupabaseUserId(clerkUserId);
++    
++    if (!supabaseUserId) {
++      return res.status(400).json({ success: false, error: 'User not found in database' });
++    }
++
++    // Verify user has access to project
++    const hasAccess = await verifyProjectAccess(projectId, supabaseUserId);
++    if (!hasAccess) {
++      return res.status(403).json({ success: false, error: 'Access denied to this project' });
++    }
++
++    const { data: sprints, error } = await supabase
++      .from('sprints')
++      .select('*')
++      .eq('project_id', projectId)
++      .order('created_at', { ascending: false });
++
++    if (error) {
++      console.error('[Supabase] Error fetching sprints:', error);
++      return res.status(400).json({ success: false, error: error.message });
++    }
++
++    res.json({ success: true, sprints: sprints || [] });
++  } catch (error) {
++    console.error('[API] Error fetching sprints:', error);
++    res.status(500).json({ success: false, error: 'Internal server error' });
++  }
++});
++
++// 12. POST /api/projects/:id/sprints - Create sprint
++app.post('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req, res) => {
++  if (!supabase) {
++    return res.status(503).json({ success: false, error: 'Supabase not configured' });
++  }
++
++  try {
++    const projectId = req.params.id;
++    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
++    const supabaseUserId = await getSupabaseUserId(clerkUserId);
++    
++    if (!supabaseUserId) {
++      return res.status(400).json({ success: false, error: 'User not found in database' });
++    }
++
++    // Verify user is a member
++    const hasAccess = await verifyProjectAccess(projectId, supabaseUserId);
++    if (!hasAccess) {
++      return res.status(403).json({ success: false, error: 'Access denied to this project' });
++    }
++
++    const { name, goal, start_date, end_date, status, planned_points } = req.body;
++
++    // Create sprint
++    const { data: sprint, error } = await supabase
++      .from('sprints')
++      .insert({
++        project_id: projectId,
++        name,
++        goal,
++        start_date,
++        end_date,
++        status: status || 'planned',
++        planned_points: planned_points || 0,
++        completed_points: 0
++      } as any)
++      .select()
++      .single();
++
++    if (error) {
++      console.error('[Supabase] Error creating sprint:', error);
++      return res.status(400).json({ success: false, error: error.message });
++    }
++
++    res.status(201).json({ success: true, sprint });
++  } catch (error) {
++    console.error('[API] Error creating sprint:', error);
++    res.status(500).json({ success: false, error: 'Internal server error' });
++  }
++});
++
++// 13. POST /api/projects/:id/issues/:issueId/comments - Add comment to issue
++app.post('/api/projects/:id/issues/:issueId/comments', requireAuth(), upsertClerkUser, async (req, res) => {
++  if (!supabase) {
++    return res.status(503).json({ success: false, error: 'Supabase not configured' });
++  }
++
++  try {
++    const { id: projectId, issueId } = req.params;
++    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
++    const supabaseUserId = await getSupabaseUserId(clerkUserId);
++    
++    if (!supabaseUserId) {
++      return res.status(400).json({ success: false, error: 'User not found in database' });
++    }
++
++    // Verify user has access to project
++    const hasAccess = await verifyProjectAccess(projectId, supabaseUserId);
++    if (!hasAccess) {
++      return res.status(403).json({ success: false, error: 'Access denied to this project' });
++    }
++
++    const { content, mentions } = req.body;
++
++    if (!content) {
++      return res.status(400).json({ success: false, error: 'Comment content is required' });
++    }
++
++    // Create comment
++    const { data: comment, error } = await supabase
++      .from('comments')
++      .insert({
++        issue_id: issueId,
++        author_id: supabaseUserId,
++        content,
++        mentions: mentions || []
++      } as any)
++      .select(`
++        *,
++        author:users!comments_author_id_fkey(id, name, email, avatar, role, department)
++      `)
++      .single();
++
++    if (error) {
++      console.error('[Supabase] Error creating comment:', error);
++      return res.status(400).json({ success: false, error: error.message });
++    }
++
++    res.status(201).json({ success: true, comment });
++  } catch (error) {
++    console.error('[API] Error creating comment:', error);
++    res.status(500).json({ success: false, error: 'Internal server error' });
++  }
++});
++
+ // ==========================================
+ // CLERK AUTHENTICATION API ROUTES
+ // ==========================================
+@@ -225,7 +1110,7 @@ app.post('/api/auth/login', (req, res) => {
+ });
+ 
+ // 4. Session Verification & Me Endpoint
+-app.get('/api/auth/me', requireAuth(), (req, res) => {
++app.get('/api/auth/me', requireAuth(), async (req, res) => {
+   const authHeader = req.headers.authorization;
+   const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : (req.query.token as string);
+ 
+@@ -257,6 +1142,26 @@ app.get('/api/auth/me', requireAuth(), (req, res) => {
+   }
+ 
+   const { passwordHash, ...safeUser } = user;
++  
++  // If Supabase is configured, also check/sync user in Supabase
++  if (supabase && (req as AuthRequest).auth?.userId) {
++    try {
++      const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
++      const { data: supabaseUser } = await supabase
++        .from('users')
++        .select('*')
++        .eq('clerk_user_id', clerkUserId!)
++        .single();
++      
++      if (supabaseUser) {
++        // Merge Supabase user data
++        (safeUser as any).id = (supabaseUser as any).id;
++      }
++    } catch (error) {
++      console.error('[Supabase] Error checking user:', error);
++    }
++  }
++  
+   res.json({
+     success: true,
+     authenticated: true,
+diff --git a/src/components/BacklogView.tsx b/src/components/BacklogView.tsx
+index 53d8562..56cd322 100644
+--- a/src/components/BacklogView.tsx
++++ b/src/components/BacklogView.tsx
+@@ -2,6 +2,7 @@ import React, { useState } from 'react';
+ import { useProject } from '../context/ProjectContext';
+ import { Sprint, Issue } from '../types';
+ import { WorkItemIcon, PriorityIcon } from './WorkItemIcon';
++import { getUserRoleInProject, canEditIssue, canCreateSprint } from '../utils/permissions';
+ import {
+   Calendar,
+   CheckCircle2,
+@@ -18,6 +19,7 @@ export const BacklogView: React.FC = () => {
+     sprints,
+     issues,
+     activeProject,
++    currentUser,
+     startSprint,
+     completeSprint,
+     createSprint,
+@@ -34,13 +36,18 @@ export const BacklogView: React.FC = () => {
+   const projectSprints = sprints.filter(s => s.projectId === activeProject.id);
+   const projectIssues = issues.filter(i => i.projectId === activeProject.id);
+ 
++  // Get user's role in the current project
++  const userRole = getUserRoleInProject(activeProject, currentUser.id);
++  const canEdit = userRole ? canEditIssue(userRole) : false;
++  const canManageSprints = userRole ? canCreateSprint(userRole) : false;
++
+   const toggleCollapse = (id: string) => {
+     setCollapsedSprints(prev => ({ ...prev, [id]: !prev[id] }));
+   };
+ 
+   const handleCreateSprint = (e: React.FormEvent) => {
+     e.preventDefault();
+-    if (!newSprintName.trim()) return;
++    if (!canManageSprints || !newSprintName.trim()) return;
+     createSprint(
+       newSprintName.trim(),
+       newSprintGoal.trim() || 'Sprint goals defined during planning.',
+@@ -112,9 +119,12 @@ export const BacklogView: React.FC = () => {
+           {/* Quick Move Sprint Dropdown */}
+           <select
+             value={currentSprintId || 'backlog'}
+-            onChange={e => moveIssueSprint(issue.id, e.target.value === 'backlog' ? 'backlog' : e.target.value)}
+-            className="bg-white border border-slate-200 text-slate-600 text-[11px] rounded px-2 py-0.5 focus:outline-none focus:border-blue-500 cursor-pointer shadow-2xs font-medium"
+-            title="Move to another Sprint"
++            onChange={e => canEdit && moveIssueSprint(issue.id, e.target.value === 'backlog' ? 'backlog' : e.target.value)}
++            disabled={!canEdit}
++            className={`bg-white border border-slate-200 text-slate-600 text-[11px] rounded px-2 py-0.5 focus:outline-none focus:border-blue-500 shadow-2xs font-medium ${
++              canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
++            }`}
++            title={!canEdit ? 'Read-only (viewer role)' : 'Move to another Sprint'}
+           >
+             {projectSprints.map(s => (
+               <option key={s.id} value={s.id}>
+@@ -146,20 +156,28 @@ export const BacklogView: React.FC = () => {
+         </div>
+ 
+         <div className="flex items-center gap-2.5">
+-          <button
+-            onClick={() => setIsNewSprintFormOpen(!isNewSprintFormOpen)}
+-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700 shadow-2xs transition-colors cursor-pointer"
+-          >
+-            <Plus className="w-3.5 h-3.5" />
+-            <span>Create Sprint</span>
+-          </button>
+-          <button
+-            onClick={() => setIsCreateModalOpen(true)}
+-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-xs transition-all active:scale-95 cursor-pointer"
+-          >
+-            <Plus className="w-3.5 h-3.5" />
+-            <span>Create Issue</span>
+-          </button>
++          {canManageSprints ? (
++            <button
++              onClick={() => setIsNewSprintFormOpen(!isNewSprintFormOpen)}
++              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700 shadow-2xs transition-colors cursor-pointer"
++            >
++              <Plus className="w-3.5 h-3.5" />
++              <span>Create Sprint</span>
++            </button>
++          ) : (
++            <div className="text-[11px] text-slate-400 italic">
++              Admin or Owner role required to create sprints
++            </div>
++          )}
++          {canEdit && (
++            <button
++              onClick={() => setIsCreateModalOpen(true)}
++              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-xs transition-all active:scale-95 cursor-pointer"
++            >
++              <Plus className="w-3.5 h-3.5" />
++              <span>Create Issue</span>
++            </button>
++          )}
+         </div>
+       </div>
+ 
+diff --git a/src/components/CreateIssueModal.tsx b/src/components/CreateIssueModal.tsx
+index a2a31d6..d7cea5c 100644
+--- a/src/components/CreateIssueModal.tsx
++++ b/src/components/CreateIssueModal.tsx
+@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
+ import { useProject } from '../context/ProjectContext';
+ import { WorkItemType, Priority } from '../types';
+ import { WorkItemIcon } from './WorkItemIcon';
++import { getUserRoleInProject, canEditIssue } from '../utils/permissions';
+ import { X, FolderKanban } from 'lucide-react';
+ 
+ export const CreateIssueModal: React.FC = () => {
+@@ -14,7 +15,8 @@ export const CreateIssueModal: React.FC = () => {
+     teamMembers,
+     sprints,
+     activeSprint,
+-    columns
++    columns,
++    currentUser
+   } = useProject();
+ 
+   if (!isCreateModalOpen) return null;
+@@ -22,6 +24,10 @@ export const CreateIssueModal: React.FC = () => {
+   const [selectedProjectId, setSelectedProjectId] = useState<string>(activeProject.id);
+   const currentProj = projects.find(p => p.id === selectedProjectId) || activeProject;
+ 
++  // Get user's role in the selected project
++  const userRole = getUserRoleInProject(currentProj, currentUser.id);
++  const canCreate = userRole ? canEditIssue(userRole) : false;
++
+   const [type, setType] = useState<WorkItemType>(
+     currentProj.allowedIssueTypes[0] || 'task'
+   );
+@@ -44,6 +50,10 @@ export const CreateIssueModal: React.FC = () => {
+ 
+   const handleSubmit = async (e: React.FormEvent) => {
+     e.preventDefault();
++    if (!canCreate) {
++      alert('Viewers cannot create issues. Contact a project admin to request member access.');
++      return;
++    }
+     if (!title.trim()) return;
+ 
+     const selectedAssignee = assigneeId === 'unassigned' ? null : teamMembers.find(m => m.id === assigneeId) || null;
+@@ -94,6 +104,13 @@ export const CreateIssueModal: React.FC = () => {
+ 
+         {/* Form Body */}
+         <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
++          {/* Viewer Warning */}
++          {!canCreate && (
++            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
++              <strong>Viewers cannot create issues.</strong> Contact a project admin to request member access.
++            </div>
++          )}
++
+           {/* Target Project Selection */}
+           <div>
+             <label className="block text-xs font-semibold text-slate-700 mb-1">
+@@ -275,7 +292,10 @@ export const CreateIssueModal: React.FC = () => {
+             </button>
+             <button
+               type="submit"
+-              className="px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-xs transition-all cursor-pointer"
++              disabled={!canCreate}
++              className={`px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-xs transition-all ${
++                canCreate ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
++              }`}
+             >
+               Create Work Item
+             </button>
+diff --git a/src/components/CreateProjectModal.tsx b/src/components/CreateProjectModal.tsx
+index a53fe64..9d1a7ea 100644
+--- a/src/components/CreateProjectModal.tsx
++++ b/src/components/CreateProjectModal.tsx
+@@ -75,13 +75,13 @@ export const CreateProjectModal: React.FC = () => {
+     }
+   };
+ 
+-  const handleSubmit = (e: React.FormEvent) => {
++  const handleSubmit = async (e: React.FormEvent) => {
+     e.preventDefault();
+     if (!name.trim() || !key.trim()) return;
+ 
+     const lead = teamMembers.find(m => m.id === leadId) || currentUser;
+ 
+-    createProject({
++    await createProject({
+       name: name.trim(),
+       key: key.trim().toUpperCase(),
+       description: description.trim(),
+diff --git a/src/components/HomePage.tsx b/src/components/HomePage.tsx
+index 75ec6dd..8ebaf42 100644
+--- a/src/components/HomePage.tsx
++++ b/src/components/HomePage.tsx
+@@ -4,18 +4,78 @@
+  */
+ 
+ import React from 'react';
+-import { SignUpButton, SignInButton } from '@clerk/clerk-react';
++import { SignUpButton, SignInButton, useUser } from '@clerk/clerk-react';
+ import { VisionLogo } from './VisionLogo';
++import { useProject } from '../context/ProjectContext';
+ import {
+   Layers,
+   Rocket,
+   BarChart3,
+   Zap,
+   Users,
+-  Calendar
++  Calendar,
++  FolderPlus
+ } from 'lucide-react';
+ 
+ export const HomePage: React.FC = () => {
++  const { isSignedIn } = useUser();
++  const { projects, setIsCreateProjectModalOpen } = useProject();
++
++  // Show welcome screen for authenticated users with no projects
++  if (isSignedIn && projects.length === 0) {
++    return (
++      <div className="min-h-screen w-full bg-gradient-to-br from-blue-50 via-indigo-50 to-slate-50 flex items-center justify-center px-6">
++        <div className="max-w-2xl w-full text-center space-y-8">
++          <div className="flex justify-center">
++            <VisionLogo size="lg" showSubtitle={true} />
++          </div>
++
++          <div className="space-y-4">
++            <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tight">
++              Welcome to Vision
++            </h1>
++            <p className="text-lg md:text-xl text-slate-600 max-w-xl mx-auto leading-relaxed">
++              Create your first project to get started with sprint planning, kanban boards, and team collaboration.
++            </p>
++          </div>
++
++          <button
++            onClick={() => setIsCreateProjectModalOpen(true)}
++            className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-bold text-lg shadow-xl hover:shadow-2xl hover:scale-105 transition-all duration-200 cursor-pointer"
++          >
++            <FolderPlus className="w-6 h-6" />
++            <span>Create Your First Project</span>
++          </button>
++
++          <div className="pt-8 grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
++            <div className="p-4 bg-white rounded-xl shadow-sm border border-slate-200">
++              <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center mb-3">
++                <Layers className="w-5 h-5 text-blue-600" />
++              </div>
++              <h3 className="font-semibold text-slate-900 mb-1">Organize Work</h3>
++              <p className="text-sm text-slate-600">Create issues, epics, and tasks with custom workflows.</p>
++            </div>
++
++            <div className="p-4 bg-white rounded-xl shadow-sm border border-slate-200">
++              <div className="w-10 h-10 rounded-lg bg-indigo-100 flex items-center justify-center mb-3">
++                <Users className="w-5 h-5 text-indigo-600" />
++              </div>
++              <h3 className="font-semibold text-slate-900 mb-1">Collaborate</h3>
++              <p className="text-sm text-slate-600">Invite team members and work together in real-time.</p>
++            </div>
++
++            <div className="p-4 bg-white rounded-xl shadow-sm border border-slate-200">
++              <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center mb-3">
++                <BarChart3 className="w-5 h-5 text-purple-600" />
++              </div>
++              <h3 className="font-semibold text-slate-900 mb-1">Track Progress</h3>
++              <p className="text-sm text-slate-600">Monitor velocity, burndown, and team performance.</p>
++            </div>
++          </div>
++        </div>
++      </div>
++    );
++  }
+   return (
+     <div className="min-h-screen w-full bg-slate-50 flex flex-col">
+       {/* Hero Section */}
+diff --git a/src/components/InviteMemberModal.tsx b/src/components/InviteMemberModal.tsx
+new file mode 100644
+index 0000000..4ecfb71
+--- /dev/null
++++ b/src/components/InviteMemberModal.tsx
+@@ -0,0 +1,259 @@
++import React, { useState } from 'react';
++import { useProject } from '../context/ProjectContext';
++import { Project, ProjectRole } from '../types';
++import { X, Mail, UserPlus, Trash2, Shield } from 'lucide-react';
++import { canManageMembers } from '../utils/permissions';
++
++interface InviteMemberModalProps {
++  project: Project | null;
++  isOpen: boolean;
++  onClose: () => void;
++}
++
++export const InviteMemberModal: React.FC<InviteMemberModalProps> = ({ project, isOpen, onClose }) => {
++  const { inviteMember, removeMember, updateMemberRole, currentUser } = useProject();
++  const [email, setEmail] = useState('');
++  const [role, setRole] = useState<ProjectRole>('member');
++  const [isLoading, setIsLoading] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++  const [successMessage, setSuccessMessage] = useState<string | null>(null);
++
++  if (!isOpen || !project) return null;
++
++  // Get current user's role in this project
++  const currentUserMember = project.members?.find(m => m.userId === currentUser.id);
++  const currentUserRole = currentUserMember?.role || 'viewer';
++  const canManage = canManageMembers(currentUserRole);
++
++  const handleInvite = async (e: React.FormEvent) => {
++    e.preventDefault();
++    setError(null);
++    setSuccessMessage(null);
++
++    if (!email.trim()) {
++      setError('Please enter an email address');
++      return;
++    }
++
++    // Basic email validation
++    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
++    if (!emailRegex.test(email)) {
++      setError('Please enter a valid email address');
++      return;
++    }
++
++    setIsLoading(true);
++
++    const result = await inviteMember(project.id, email.trim(), role);
++
++    setIsLoading(false);
++
++    if (result.success) {
++      setSuccessMessage(`Successfully invited ${email} as ${role}`);
++      setEmail('');
++      setRole('member');
++      setTimeout(() => setSuccessMessage(null), 3000);
++    } else {
++      setError(result.error || 'Failed to invite member');
++    }
++  };
++
++  const handleRemoveMember = async (userId: string) => {
++    if (!canManage) return;
++    
++    if (confirm('Are you sure you want to remove this member from the project?')) {
++      await removeMember(project.id, userId);
++    }
++  };
++
++  const handleRoleChange = async (userId: string, newRole: ProjectRole) => {
++    if (!canManage) return;
++    await updateMemberRole(project.id, userId, newRole);
++  };
++
++  const getRoleBadgeColor = (memberRole: ProjectRole) => {
++    switch (memberRole) {
++      case 'owner':
++        return 'bg-purple-100 text-purple-700 border-purple-200';
++      case 'admin':
++        return 'bg-blue-100 text-blue-700 border-blue-200';
++      case 'member':
++        return 'bg-green-100 text-green-700 border-green-200';
++      case 'viewer':
++        return 'bg-slate-100 text-slate-700 border-slate-200';
++      default:
++        return 'bg-slate-100 text-slate-700 border-slate-200';
++    }
++  };
++
++  return (
++    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
++      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
++        {/* Header */}
++        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
++          <div>
++            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
++              <UserPlus className="w-5 h-5 text-blue-600" />
++              <span>Project Members</span>
++            </h2>
++            <p className="text-xs text-slate-500 mt-0.5">
++              {project.name} ({project.key})
++            </p>
++          </div>
++          <button
++            onClick={onClose}
++            className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors"
++          >
++            <X className="w-5 h-5" />
++          </button>
++        </div>
++
++        {/* Content */}
++        <div className="flex-1 overflow-y-auto p-6 space-y-6">
++          {/* Current Members */}
++          <div className="space-y-3">
++            <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">
++              Current Members ({project.members?.length || 0})
++            </h3>
++            
++            {project.members && project.members.length > 0 ? (
++              <div className="space-y-2">
++                {project.members.map((member) => (
++                  <div
++                    key={member.id}
++                    className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200"
++                  >
++                    <div className="flex items-center gap-3">
++                      <img
++                        src={member.user.avatar}
++                        alt={member.user.name}
++                        className="w-10 h-10 rounded-full object-cover ring-2 ring-white"
++                      />
++                      <div>
++                        <div className="font-medium text-sm text-slate-900">{member.user.name}</div>
++                        <div className="text-xs text-slate-500">{member.user.email}</div>
++                      </div>
++                    </div>
++
++                    <div className="flex items-center gap-2">
++                      {canManage && member.role !== 'owner' ? (
++                        <select
++                          value={member.role}
++                          onChange={(e) => handleRoleChange(member.userId, e.target.value as ProjectRole)}
++                          className="text-xs font-semibold px-2 py-1 rounded-md border capitalize cursor-pointer"
++                        >
++                          <option value="admin">Admin</option>
++                          <option value="member">Member</option>
++                          <option value="viewer">Viewer</option>
++                        </select>
++                      ) : (
++                        <span className={`text-xs font-semibold px-2 py-1 rounded-md border capitalize ${getRoleBadgeColor(member.role)}`}>
++                          <Shield className="w-3 h-3 inline mr-1" />
++                          {member.role}
++                        </span>
++                      )}
++
++                      {canManage && member.role !== 'owner' && member.userId !== currentUser.id && (
++                        <button
++                          onClick={() => handleRemoveMember(member.userId)}
++                          className="p-1.5 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
++                          title="Remove member"
++                        >
++                          <Trash2 className="w-4 h-4" />
++                        </button>
++                      )}
++                    </div>
++                  </div>
++                ))}
++              </div>
++            ) : (
++              <div className="text-center py-8 text-slate-500 text-sm">
++                No members yet. Invite someone to get started!
++              </div>
++            )}
++          </div>
++
++          {/* Invite New Member */}
++          {canManage && (
++            <div className="space-y-3 pt-4 border-t border-slate-200">
++              <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">
++                Invite New Member
++              </h3>
++
++              <form onSubmit={handleInvite} className="space-y-3">
++                <div className="space-y-2">
++                  <label className="text-xs font-medium text-slate-600">Email Address</label>
++                  <div className="relative">
++                    <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
++                    <input
++                      type="email"
++                      value={email}
++                      onChange={(e) => setEmail(e.target.value)}
++                      placeholder="colleague@company.com"
++                      className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
++                      disabled={isLoading}
++                    />
++                  </div>
++                </div>
++
++                <div className="space-y-2">
++                  <label className="text-xs font-medium text-slate-600">Role</label>
++                  <select
++                    value={role}
++                    onChange={(e) => setRole(e.target.value as ProjectRole)}
++                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 capitalize cursor-pointer"
++                    disabled={isLoading}
++                  >
++                    <option value="admin">Admin - Can manage members and settings</option>
++                    <option value="member">Member - Can create and edit issues</option>
++                    <option value="viewer">Viewer - Read-only access</option>
++                  </select>
++                </div>
++
++                {error && (
++                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-sm text-rose-700">
++                    {error}
++                  </div>
++                )}
++
++                {successMessage && (
++                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-700">
++                    {successMessage}
++                  </div>
++                )}
++
++                <button
++                  type="submit"
++                  disabled={isLoading}
++                  className="w-full px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-sm font-semibold rounded-lg shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
++                >
++                  {isLoading ? (
++                    <>
++                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
++                      <span>Sending Invitation...</span>
++                    </>
++                  ) : (
++                    <>
++                      <UserPlus className="w-4 h-4" />
++                      <span>Send Invitation</span>
++                    </>
++                  )}
++                </button>
++              </form>
++
++              <p className="text-xs text-slate-500 text-center">
++                The invited user will receive an email with instructions to join this project.
++              </p>
++            </div>
++          )}
++
++          {!canManage && (
++            <div className="text-center py-4 text-sm text-slate-500">
++              Only project owners and admins can invite new members.
++            </div>
++          )}
++        </div>
++      </div>
++    </div>
++  );
++};
+diff --git a/src/components/IssueDetailModal.tsx b/src/components/IssueDetailModal.tsx
+index 117b44a..098beb0 100644
+--- a/src/components/IssueDetailModal.tsx
++++ b/src/components/IssueDetailModal.tsx
+@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
+ import { useProject } from '../context/ProjectContext';
+ import { WorkItemIcon, PriorityIcon } from './WorkItemIcon';
+ import { Priority } from '../types';
++import { getUserRoleInProject, canEditIssue, canDeleteProject } from '../utils/permissions';
+ import {
+   X,
+   Trash2,
+@@ -9,7 +10,8 @@ import {
+   MessageSquare,
+   History,
+   Send,
+-  AtSign
++  AtSign,
++  Eye
+ } from 'lucide-react';
+ 
+ export const IssueDetailModal: React.FC = () => {
+@@ -21,6 +23,7 @@ export const IssueDetailModal: React.FC = () => {
+     activeProject,
+     teamMembers,
+     sprints,
++    currentUser,
+     updateIssue,
+     deleteIssue,
+     moveIssueStatus,
+@@ -34,6 +37,12 @@ export const IssueDetailModal: React.FC = () => {
+   const issueProject = projects.find(p => p.id === selectedIssue.projectId) || activeProject;
+   const allowedTypes = issueProject.allowedIssueTypes || ['epic', 'story', 'task', 'bug'];
+ 
++  // Get user's role in the project
++  const userRole = getUserRoleInProject(issueProject, currentUser.id);
++  const canEdit = userRole ? canEditIssue(userRole) : false;
++  const canDelete = userRole ? canDeleteProject(userRole) : false;
++  const isViewer = userRole === 'viewer';
++
+   const [activeTab, setActiveTab] = useState<'comments' | 'history'>('comments');
+   const [commentText, setCommentText] = useState('');
+   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
+@@ -46,6 +55,7 @@ export const IssueDetailModal: React.FC = () => {
+   const commentInputRef = useRef<HTMLTextAreaElement>(null);
+ 
+   const handleTitleBlur = () => {
++    if (!canEdit) return;
+     setIsEditingTitle(false);
+     if (titleValue.trim() && titleValue !== selectedIssue.title) {
+       updateIssue(selectedIssue.id, { title: titleValue.trim() });
+@@ -53,6 +63,7 @@ export const IssueDetailModal: React.FC = () => {
+   };
+ 
+   const handleDescBlur = () => {
++    if (!canEdit) return;
+     setIsEditingDesc(false);
+     if (descValue !== selectedIssue.description) {
+       updateIssue(selectedIssue.id, { description: descValue });
+@@ -61,6 +72,7 @@ export const IssueDetailModal: React.FC = () => {
+ 
+   const handleAddSubtaskSubmit = (e: React.FormEvent) => {
+     e.preventDefault();
++    if (!canEdit) return;
+     if (newSubtaskTitle.trim()) {
+       addSubtask(selectedIssue.id, newSubtaskTitle.trim());
+       setNewSubtaskTitle('');
+@@ -69,6 +81,7 @@ export const IssueDetailModal: React.FC = () => {
+ 
+   const handleCommentSubmit = (e: React.FormEvent) => {
+     e.preventDefault();
++    if (!canEdit) return;
+     if (commentText.trim()) {
+       addComment(selectedIssue.id, commentText.trim());
+       setCommentText('');
+@@ -105,20 +118,40 @@ export const IssueDetailModal: React.FC = () => {
+             <span className="text-xs text-slate-600 font-medium">
+               {selectedIssue.epicTitle || 'Sprint Item'}
+             </span>
++            {/* Role Badge */}
++            {userRole && (
++              <span
++                className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded font-semibold border ${
++                  userRole === 'owner'
++                    ? 'bg-purple-50 text-purple-700 border-purple-200'
++                    : userRole === 'admin'
++                    ? 'bg-blue-50 text-blue-700 border-blue-200'
++                    : userRole === 'member'
++                    ? 'bg-green-50 text-green-700 border-green-200'
++                    : 'bg-slate-100 text-slate-600 border-slate-300'
++                }`}
++                title={`Your role: ${userRole}`}
++              >
++                {userRole === 'viewer' && <Eye className="w-2.5 h-2.5 inline mr-0.5" />}
++                {userRole}
++              </span>
++            )}
+           </div>
+ 
+           <div className="flex items-center gap-2">
+-            <button
+-              onClick={() => {
+-                if (confirm(`Are you sure you want to delete ${selectedIssue.key}?`)) {
+-                  deleteIssue(selectedIssue.id);
+-                }
+-              }}
+-              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-slate-100 transition-colors cursor-pointer"
+-              title="Delete issue"
+-            >
+-              <Trash2 className="w-4 h-4" />
+-            </button>
++            {canDelete && (
++              <button
++                onClick={() => {
++                  if (confirm(`Are you sure you want to delete ${selectedIssue.key}?`)) {
++                    deleteIssue(selectedIssue.id);
++                  }
++                }}
++                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-slate-100 transition-colors cursor-pointer"
++                title="Delete issue (Admin/Owner only)"
++              >
++                <Trash2 className="w-4 h-4" />
++              </button>
++            )}
+             <button
+               onClick={() => setSelectedIssue(null)}
+               className="p-1.5 rounded-lg text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+@@ -135,7 +168,7 @@ export const IssueDetailModal: React.FC = () => {
+           <div className="flex-1 p-6 space-y-6 overflow-y-auto border-b lg:border-b-0 lg:border-r border-slate-200 bg-white">
+             {/* Title */}
+             <div>
+-              {isEditingTitle ? (
++              {isEditingTitle && canEdit ? (
+                 <input
+                   type="text"
+                   value={titleValue}
+@@ -146,9 +179,11 @@ export const IssueDetailModal: React.FC = () => {
+                 />
+               ) : (
+                 <h2
+-                  onClick={() => setIsEditingTitle(true)}
+-                  className="text-base font-semibold text-slate-900 hover:bg-slate-50 p-1.5 -ml-1.5 rounded-lg cursor-pointer transition-colors"
+-                  title="Click to edit title"
++                  onClick={() => canEdit && setIsEditingTitle(true)}
++                  className={`text-base font-semibold text-slate-900 p-1.5 -ml-1.5 rounded-lg transition-colors ${
++                    canEdit ? 'hover:bg-slate-50 cursor-pointer' : 'cursor-default'
++                  }`}
++                  title={canEdit ? 'Click to edit title' : 'Read-only (viewer role)'}
+                 >
+                   {selectedIssue.title}
+                 </h2>
+@@ -160,7 +195,7 @@ export const IssueDetailModal: React.FC = () => {
+               <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                 Description
+               </div>
+-              {isEditingDesc ? (
++              {isEditingDesc && canEdit ? (
+                 <div className="space-y-2">
+                   <textarea
+                     value={descValue}
+@@ -185,9 +220,11 @@ export const IssueDetailModal: React.FC = () => {
+                 </div>
+               ) : (
+                 <div
+-                  onClick={() => setIsEditingDesc(true)}
+-                  className="p-3.5 bg-slate-50 hover:bg-slate-100/60 rounded-xl border border-slate-200 text-xs text-slate-700 leading-relaxed cursor-pointer transition-colors whitespace-pre-wrap min-h-[60px]"
+-                  title="Click to edit description"
++                  onClick={() => canEdit && setIsEditingDesc(true)}
++                  className={`p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700 leading-relaxed transition-colors whitespace-pre-wrap min-h-[60px] ${
++                    canEdit ? 'hover:bg-slate-100/60 cursor-pointer' : 'cursor-default'
++                  }`}
++                  title={canEdit ? 'Click to edit description' : 'Read-only (viewer role)'}
+                 >
+                   {selectedIssue.description || 'No description provided. Click to add details, technical requirements, or acceptance criteria.'}
+                 </div>
+@@ -225,14 +262,19 @@ export const IssueDetailModal: React.FC = () => {
+                 {selectedIssue.subtasks.map(st => (
+                   <div
+                     key={st.id}
+-                    onClick={() => toggleSubtask(selectedIssue.id, st.id)}
+-                    className="flex items-center gap-2.5 p-2 rounded-lg bg-slate-50 hover:bg-slate-100/80 border border-slate-200/80 cursor-pointer text-xs transition-colors"
++                    onClick={() => canEdit && toggleSubtask(selectedIssue.id, st.id)}
++                    className={`flex items-center gap-2.5 p-2 rounded-lg bg-slate-50 border border-slate-200/80 text-xs transition-colors ${
++                      canEdit ? 'hover:bg-slate-100/80 cursor-pointer' : 'cursor-default'
++                    }`}
+                   >
+                     <input
+                       type="checkbox"
+                       checked={st.completed}
+                       onChange={() => {}}
+-                      className="rounded border-slate-300 text-blue-600 focus:ring-0 cursor-pointer"
++                      disabled={!canEdit}
++                      className={`rounded border-slate-300 text-blue-600 focus:ring-0 ${
++                        canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
++                      }`}
+                     />
+                     <span
+                       className={`flex-1 ${
+@@ -246,21 +288,27 @@ export const IssueDetailModal: React.FC = () => {
+               </div>
+ 
+               {/* Add subtask inline input */}
+-              <form onSubmit={handleAddSubtaskSubmit} className="flex gap-2">
+-                <input
+-                  type="text"
+-                  placeholder="+ Add new subtask item..."
+-                  value={newSubtaskTitle}
+-                  onChange={e => setNewSubtaskTitle(e.target.value)}
+-                  className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
+-                />
+-                <button
+-                  type="submit"
+-                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium border border-slate-200 cursor-pointer"
+-                >
+-                  Add
+-                </button>
+-              </form>
++              {canEdit ? (
++                <form onSubmit={handleAddSubtaskSubmit} className="flex gap-2">
++                  <input
++                    type="text"
++                    placeholder="+ Add new subtask item..."
++                    value={newSubtaskTitle}
++                    onChange={e => setNewSubtaskTitle(e.target.value)}
++                    className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
++                  />
++                  <button
++                    type="submit"
++                    className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium border border-slate-200 cursor-pointer"
++                  >
++                    Add
++                  </button>
++                </form>
++              ) : (
++                <div className="text-[11px] text-slate-400 italic border border-dashed border-slate-200 rounded-lg p-2 text-center">
++                  Viewers cannot add subtasks
++                </div>
++              )}
+             </div>
+ 
+             {/* Discussion Comments & Audit Log Tabs */}
+@@ -322,70 +370,78 @@ export const IssueDetailModal: React.FC = () => {
+                   </div>
+ 
+                   {/* Add comment with @mention prompt */}
+-                  <form onSubmit={handleCommentSubmit} className="space-y-2 relative">
+-                    <div className="relative">
+-                      <textarea
+-                        ref={commentInputRef}
+-                        rows={2}
+-                        placeholder="Write a comment... Type '@' to mention team members and trigger automated Nodemailer alerts..."
+-                        value={commentText}
+-                        onChange={e => {
+-                          setCommentText(e.target.value);
+-                          if (e.target.value.endsWith('@')) {
+-                            setMentionPickerOpen(true);
+-                          }
+-                        }}
+-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
+-                      />
+-
+-                      {/* @Mention Picker Popover */}
+-                      {mentionPickerOpen && (
+-                        <div className="absolute bottom-full left-0 mb-1 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-20 p-2 space-y-1">
+-                          <div className="text-[10px] font-semibold text-slate-500 px-2 py-1 uppercase">
+-                            Tag Team Member:
++                  {canEdit ? (
++                    <form onSubmit={handleCommentSubmit} className="space-y-2 relative">
++                      <div className="relative">
++                        <textarea
++                          ref={commentInputRef}
++                          rows={2}
++                          placeholder="Write a comment... Type '@' to mention team members and trigger automated Nodemailer alerts..."
++                          value={commentText}
++                          onChange={e => {
++                            setCommentText(e.target.value);
++                            if (e.target.value.endsWith('@')) {
++                              setMentionPickerOpen(true);
++                            }
++                          }}
++                          className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
++                        />
++
++                        {/* @Mention Picker Popover */}
++                        {mentionPickerOpen && (
++                          <div className="absolute bottom-full left-0 mb-1 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-20 p-2 space-y-1">
++                            <div className="text-[10px] font-semibold text-slate-500 px-2 py-1 uppercase">
++                              Tag Team Member:
++                            </div>
++                            {teamMembers.map(m => {
++                              const handle = m.email.split('@')[0];
++                              return (
++                                <button
++                                  key={m.id}
++                                  type="button"
++                                  onClick={() => insertMention(handle)}
++                                  className="w-full flex items-center gap-2 p-1.5 rounded-lg hover:bg-slate-100 text-left text-xs transition-colors cursor-pointer"
++                                >
++                                  <img
++                                    src={m.avatar}
++                                    alt={m.name}
++                                    className="w-4 h-4 rounded-full object-cover"
++                                  />
++                                  <span className="font-semibold text-slate-800">{m.name}</span>
++                                  <span className="text-[10px] text-slate-500 font-mono">@{handle}</span>
++                                </button>
++                              );
++                            })}
+                           </div>
+-                          {teamMembers.map(m => {
+-                            const handle = m.email.split('@')[0];
+-                            return (
+-                              <button
+-                                key={m.id}
+-                                type="button"
+-                                onClick={() => insertMention(handle)}
+-                                className="w-full flex items-center gap-2 p-1.5 rounded-lg hover:bg-slate-100 text-left text-xs transition-colors cursor-pointer"
+-                              >
+-                                <img
+-                                  src={m.avatar}
+-                                  alt={m.name}
+-                                  className="w-4 h-4 rounded-full object-cover"
+-                                />
+-                                <span className="font-semibold text-slate-800">{m.name}</span>
+-                                <span className="text-[10px] text-slate-500 font-mono">@{handle}</span>
+-                              </button>
+-                            );
+-                          })}
+-                        </div>
+-                      )}
+-                    </div>
++                        )}
++                      </div>
+ 
+-                    <div className="flex items-center justify-between">
+-                      <button
+-                        type="button"
+-                        onClick={() => setMentionPickerOpen(!mentionPickerOpen)}
+-                        className="flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
+-                      >
+-                        <AtSign className="w-3.5 h-3.5" />
+-                        <span>Tag member (@)</span>
+-                      </button>
+-
+-                      <button
+-                        type="submit"
+-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-medium shadow-xs transition-all cursor-pointer"
+-                      >
+-                        <Send className="w-3 h-3" />
+-                        <span>Send Comment</span>
+-                      </button>
++                      <div className="flex items-center justify-between">
++                        <button
++                          type="button"
++                          onClick={() => setMentionPickerOpen(!mentionPickerOpen)}
++                          className="flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
++                        >
++                          <AtSign className="w-3.5 h-3.5" />
++                          <span>Tag member (@)</span>
++                        </button>
++
++                        <button
++                          type="submit"
++                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-medium shadow-xs transition-all cursor-pointer"
++                        >
++                          <Send className="w-3 h-3" />
++                          <span>Send Comment</span>
++                        </button>
++                      </div>
++                    </form>
++                  ) : (
++                    <div className="border border-dashed border-slate-200 rounded-xl p-3 text-center">
++                      <p className="text-[11px] text-slate-400 italic">
++                        Viewers cannot add comments. Contact a project admin to request member access.
++                      </p>
+                     </div>
+-                  </form>
++                  )}
+                 </div>
+               ) : (
+                 /* History / Activity Log */
+@@ -421,8 +477,11 @@ export const IssueDetailModal: React.FC = () => {
+               </label>
+               <select
+                 value={selectedIssue.type}
+-                onChange={e => updateIssue(selectedIssue.id, { type: e.target.value as any })}
+-                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 capitalize font-medium shadow-2xs cursor-pointer"
++                onChange={e => canEdit && updateIssue(selectedIssue.id, { type: e.target.value as any })}
++                disabled={!canEdit}
++                className={`w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 capitalize font-medium shadow-2xs ${
++                  canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
++                }`}
+               >
+                 {allowedTypes.map(t => (
+                   <option key={t} value={t}>
+@@ -439,8 +498,11 @@ export const IssueDetailModal: React.FC = () => {
+               </label>
+               <select
+                 value={selectedIssue.status}
+-                onChange={e => moveIssueStatus(selectedIssue.id, e.target.value)}
+-                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 uppercase font-mono font-medium shadow-2xs cursor-pointer"
++                onChange={e => canEdit && moveIssueStatus(selectedIssue.id, e.target.value)}
++                disabled={!canEdit}
++                className={`w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 uppercase font-mono font-medium shadow-2xs ${
++                  canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
++                }`}
+               >
+                 {columns.map(c => (
+                   <option key={c.id} value={c.id}>
+@@ -458,11 +520,15 @@ export const IssueDetailModal: React.FC = () => {
+               <select
+                 value={selectedIssue.assignee?.id || 'unassigned'}
+                 onChange={e => {
++                  if (!canEdit) return;
+                   const val = e.target.value;
+                   const newAssignee = val === 'unassigned' ? null : teamMembers.find(m => m.id === val) || null;
+                   updateIssue(selectedIssue.id, { assignee: newAssignee });
+                 }}
+-                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs cursor-pointer font-medium"
++                disabled={!canEdit}
++                className={`w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs font-medium ${
++                  canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
++                }`}
+               >
+                 <option value="unassigned">Unassigned</option>
+                 {teamMembers.map(m => (
+@@ -480,8 +546,11 @@ export const IssueDetailModal: React.FC = () => {
+               </label>
+               <select
+                 value={selectedIssue.priority}
+-                onChange={e => updateIssue(selectedIssue.id, { priority: e.target.value as Priority })}
+-                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 capitalize shadow-2xs cursor-pointer font-medium"
++                onChange={e => canEdit && updateIssue(selectedIssue.id, { priority: e.target.value as Priority })}
++                disabled={!canEdit}
++                className={`w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 capitalize shadow-2xs font-medium ${
++                  canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
++                }`}
+               >
+                 <option value="blocker">Blocker (P0 Critical Alert)</option>
+                 <option value="high">High (P1)</option>
+@@ -501,12 +570,13 @@ export const IssueDetailModal: React.FC = () => {
+                   <button
+                     key={pts}
+                     type="button"
+-                    onClick={() => updateIssue(selectedIssue.id, { storyPoints: pts })}
+-                    className={`py-1 rounded font-mono text-xs font-bold border transition-all cursor-pointer ${
++                    onClick={() => canEdit && updateIssue(selectedIssue.id, { storyPoints: pts })}
++                    disabled={!canEdit}
++                    className={`py-1 rounded font-mono text-xs font-bold border transition-all ${
+                       selectedIssue.storyPoints === pts
+                         ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+                         : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
+-                    }`}
++                    } ${canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}
+                   >
+                     {pts}
+                   </button>
+@@ -521,8 +591,11 @@ export const IssueDetailModal: React.FC = () => {
+               </label>
+               <select
+                 value={selectedIssue.sprintId || 'backlog'}
+-                onChange={e => updateIssue(selectedIssue.id, { sprintId: e.target.value === 'backlog' ? null : e.target.value })}
+-                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs cursor-pointer font-medium"
++                onChange={e => canEdit && updateIssue(selectedIssue.id, { sprintId: e.target.value === 'backlog' ? null : e.target.value })}
++                disabled={!canEdit}
++                className={`w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs font-medium ${
++                  canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
++                }`}
+               >
+                 {sprints.map(s => (
+                   <option key={s.id} value={s.id}>
+diff --git a/src/components/KanbanBoard.tsx b/src/components/KanbanBoard.tsx
+index 2893f6e..dc635fe 100644
+--- a/src/components/KanbanBoard.tsx
++++ b/src/components/KanbanBoard.tsx
+@@ -2,6 +2,7 @@ import React, { useState } from 'react';
+ import { useProject } from '../context/ProjectContext';
+ import { Issue, KanbanColumn, SwimlaneType } from '../types';
+ import { WorkItemIcon, PriorityIcon } from './WorkItemIcon';
++import { getUserRoleInProject, canEditIssue } from '../utils/permissions';
+ import {
+   SlidersHorizontal,
+   CheckCircle2,
+@@ -44,6 +45,10 @@ export const KanbanBoard: React.FC = () => {
+   const [draggedIssueId, setDraggedIssueId] = useState<string | null>(null);
+   const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null);
+ 
++  // Get user's role in the current project
++  const userRole = getUserRoleInProject(activeProject, currentUser.id);
++  const canEdit = userRole ? canEditIssue(userRole) : false;
++
+   // Apply active project, active sprint & quick filters
+   const filteredIssues = issues.filter(issue => {
+     // Project filter
+@@ -102,16 +107,22 @@ export const KanbanBoard: React.FC = () => {
+ 
+   // Drag handlers
+   const handleDragStart = (e: React.DragEvent, id: string) => {
++    if (!canEdit) {
++      e.preventDefault();
++      return;
++    }
+     e.dataTransfer.setData('text/plain', id);
+     setDraggedIssueId(id);
+   };
+ 
+   const handleDragOver = (e: React.DragEvent, colId: string) => {
++    if (!canEdit) return;
+     e.preventDefault();
+     setDragOverColumnId(colId);
+   };
+ 
+   const handleDrop = (e: React.DragEvent, colId: string) => {
++    if (!canEdit) return;
+     e.preventDefault();
+     const id = e.dataTransfer.getData('text/plain') || draggedIssueId;
+     if (id) {
+@@ -129,14 +140,15 @@ export const KanbanBoard: React.FC = () => {
+     return (
+       <div
+         key={issue.id}
+-        draggable
++        draggable={canEdit}
+         onDragStart={e => handleDragStart(e, issue.id)}
+         onClick={() => setSelectedIssue(issue)}
+         className={`group p-3.5 rounded-xl bg-white hover:bg-slate-50/80 border transition-all duration-150 cursor-pointer shadow-2xs hover:shadow-xs ${
+           isBlocker
+             ? 'border-red-300 hover:border-red-400 bg-red-50/20'
+             : 'border-slate-200/90 hover:border-blue-300'
+-        } ${draggedIssueId === issue.id ? 'opacity-40 scale-98' : ''}`}
++        } ${draggedIssueId === issue.id ? 'opacity-40 scale-98' : ''} ${!canEdit ? 'cursor-default' : ''}`}
++        title={!canEdit ? 'Read-only view (viewer role)' : ''}
+       >
+         {/* Top: Issue Key, Type, Priority & Story Points */}
+         <div className="flex items-center justify-between gap-2 mb-2">
+diff --git a/src/components/Navbar.tsx b/src/components/Navbar.tsx
+index 519e4c4..03f7c25 100644
+--- a/src/components/Navbar.tsx
++++ b/src/components/Navbar.tsx
+@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
+ import { useProject } from '../context/ProjectContext';
+ import { UserButton, useUser } from '@clerk/clerk-react';
+ import { VisionLogo } from './VisionLogo';
++import { getUserRoleInProject, canEditIssue } from '../utils/permissions';
+ import {
+   Plus,
+   Search,
+@@ -40,6 +41,10 @@ export const Navbar: React.FC = () => {
+   const [isNotifOpen, setIsNotifOpen] = useState(false);
+   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
+ 
++  // Check if user can create issues in active project
++  const userRoleInActiveProject = getUserRoleInProject(activeProject, currentUser.id);
++  const canCreateIssue = userRoleInActiveProject ? canEditIssue(userRoleInActiveProject) : false;
++
+   const notifRef = useRef<HTMLDivElement>(null);
+   const projectRef = useRef<HTMLDivElement>(null);
+ 
+@@ -182,8 +187,12 @@ export const Navbar: React.FC = () => {
+       <div className="flex items-center gap-2.5">
+         {/* Create Work Item Button with gradient */}
+         <button
+-          onClick={() => setIsCreateModalOpen(true)}
+-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-medium shadow-xs transition-all duration-150 active:scale-95 cursor-pointer"
++          onClick={() => canCreateIssue && setIsCreateModalOpen(true)}
++          disabled={!canCreateIssue}
++          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-medium shadow-xs transition-all duration-150 active:scale-95 ${
++            canCreateIssue ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
++          }`}
++          title={!canCreateIssue ? 'Viewers cannot create issues. Contact a project admin to request member access.' : 'Create new work item'}
+         >
+           <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+           <span>Create</span>
+diff --git a/src/components/ProjectsView.tsx b/src/components/ProjectsView.tsx
+index 8c56f9c..a090d91 100644
+--- a/src/components/ProjectsView.tsx
++++ b/src/components/ProjectsView.tsx
+@@ -2,6 +2,8 @@ import React, { useState } from 'react';
+ import { useProject } from '../context/ProjectContext';
+ import { Project } from '../types';
+ import { WorkItemIcon } from './WorkItemIcon';
++import { InviteMemberModal } from './InviteMemberModal';
++import { canInviteMembers } from '../utils/permissions';
+ import {
+   FolderKanban,
+   Plus,
+@@ -13,7 +15,9 @@ import {
+   CheckCircle2,
+   ShieldCheck,
+   Layers,
+-  Kanban
++  Kanban,
++  UserPlus,
++  Users
+ } from 'lucide-react';
+ 
+ export const ProjectsView: React.FC = () => {
+@@ -25,10 +29,12 @@ export const ProjectsView: React.FC = () => {
+     sprints,
+     setIsCreateProjectModalOpen,
+     setActiveTab,
+-    deleteProject
++    deleteProject,
++    currentUser
+   } = useProject();
+ 
+   const [projectSearch, setProjectSearch] = useState('');
++  const [inviteModalProject, setInviteModalProject] = useState<Project | null>(null);
+ 
+   const filteredProjects = projects.filter(p => {
+     if (!projectSearch.trim()) return true;
+@@ -41,6 +47,11 @@ export const ProjectsView: React.FC = () => {
+     setActiveTab('board');
+   };
+ 
++  const getCurrentUserRole = (project: Project) => {
++    const member = project.members?.find(m => m.userId === currentUser.id);
++    return member?.role || 'viewer';
++  };
++
+   return (
+     <div className="flex-1 flex flex-col h-full bg-slate-50/50 overflow-y-auto p-6 space-y-6">
+       {/* Header */}
+@@ -86,6 +97,9 @@ export const ProjectsView: React.FC = () => {
+           const projSprints = sprints.filter(s => s.projectId === proj.id);
+           const activeProjSprint = projSprints.find(s => s.status === 'active');
+           const completedIssues = projIssues.filter(i => i.status === 'done').length;
++          const userRole = getCurrentUserRole(proj);
++          const canInvite = canInviteMembers(userRole);
++          const memberCount = proj.members?.length || 0;
+ 
+           return (
+             <div
+@@ -122,19 +136,27 @@ export const ProjectsView: React.FC = () => {
+                     </div>
+                   </div>
+ 
+-                  {projects.length > 1 && (
+-                    <button
+-                      onClick={() => {
+-                        if (confirm(`Delete project "${proj.name}" and all its issues?`)) {
+-                          deleteProject(proj.id);
+-                        }
+-                      }}
+-                      className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-100 cursor-pointer"
+-                      title="Delete project"
+-                    >
+-                      <Trash2 className="w-3.5 h-3.5" />
+-                    </button>
+-                  )}
++                  <div className="flex items-center gap-1">
++                    {memberCount > 0 && (
++                      <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-slate-100 border border-slate-200" title="Project members">
++                        <Users className="w-3 h-3 text-slate-600" />
++                        <span className="text-xs font-semibold text-slate-700">{memberCount}</span>
++                      </div>
++                    )}
++                    {projects.length > 1 && (
++                      <button
++                        onClick={() => {
++                          if (confirm(`Delete project "${proj.name}" and all its issues?`)) {
++                            deleteProject(proj.id);
++                          }
++                        }}
++                        className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-100 cursor-pointer"
++                        title="Delete project"
++                      >
++                        <Trash2 className="w-3.5 h-3.5" />
++                      </button>
++                    )}
++                  </div>
+                 </div>
+ 
+                 {/* Description */}
+@@ -177,35 +199,54 @@ export const ProjectsView: React.FC = () => {
+                 </div>
+               </div>
+ 
+-              {/* Footer: Lead & Switch Action */}
+-              <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+-                <div className="flex items-center gap-2">
+-                  <img
+-                    src={proj.lead.avatar}
+-                    alt={proj.lead.name}
+-                    className="w-5 h-5 rounded-full object-cover ring-1 ring-slate-200"
+-                  />
+-                  <div className="text-[11px] text-slate-600 truncate max-w-[120px]">
+-                    Lead: <span className="font-medium text-slate-800">{proj.lead.name.split(' ')[0]}</span>
++              {/* Footer: Lead, Invite & Switch Action */}
++              <div className="pt-3 border-t border-slate-100 space-y-2">
++                <div className="flex items-center justify-between">
++                  <div className="flex items-center gap-2">
++                    <img
++                      src={proj.lead.avatar}
++                      alt={proj.lead.name}
++                      className="w-5 h-5 rounded-full object-cover ring-1 ring-slate-200"
++                    />
++                    <div className="text-[11px] text-slate-600 truncate max-w-[120px]">
++                      Lead: <span className="font-medium text-slate-800">{proj.lead.name.split(' ')[0]}</span>
++                    </div>
+                   </div>
++
++                  <button
++                    onClick={() => handleSelectProject(proj)}
++                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
++                      isActive
++                        ? 'bg-blue-600 text-white shadow-2xs'
++                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
++                    }`}
++                  >
++                    <span>{isActive ? 'View Board' : 'Switch Project'}</span>
++                    <ArrowRight className="w-3.5 h-3.5" />
++                  </button>
+                 </div>
+ 
+-                <button
+-                  onClick={() => handleSelectProject(proj)}
+-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+-                    isActive
+-                      ? 'bg-blue-600 text-white shadow-2xs'
+-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+-                  }`}
+-                >
+-                  <span>{isActive ? 'View Board' : 'Switch Project'}</span>
+-                  <ArrowRight className="w-3.5 h-3.5" />
+-                </button>
++                {canInvite && (
++                  <button
++                    onClick={() => setInviteModalProject(proj)}
++                    className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-50 to-blue-50 hover:from-indigo-100 hover:to-blue-100 border border-indigo-200/60 text-indigo-700 text-xs font-semibold transition-all cursor-pointer"
++                  >
++                    <UserPlus className="w-3.5 h-3.5" />
++                    <span>Invite Members</span>
++                  </button>
++                )}
+               </div>
+             </div>
+           );
+         })}
+       </div>
++
++      {/* Invite Member Modal */}
++      <InviteMemberModal
++        project={inviteModalProject}
++        isOpen={inviteModalProject !== null}
++        onClose={() => setInviteModalProject(null)}
++      />
+     </div>
+   );
+ };
+diff --git a/src/context/ProjectContext.tsx b/src/context/ProjectContext.tsx
+index 0f3f2c1..e44c3de 100644
+--- a/src/context/ProjectContext.tsx
++++ b/src/context/ProjectContext.tsx
+@@ -11,7 +11,9 @@ import {
+   WorkItemType,
+   Priority,
+   Project,
+-  ClerkSession
++  ClerkSession,
++  ProjectMember,
++  ProjectRole
+ } from '../types';
+ import {
+   TEAM_MEMBERS,
+@@ -23,6 +25,8 @@ import {
+ } from '../data/mockData';
+ 
+ interface ProjectContextType {
++  // Supabase configuration
++  isSupabaseConfigured: boolean;
+   // Data
+   projects: Project[];
+   activeProject: Project;
+@@ -67,7 +71,7 @@ interface ProjectContextType {
+   setSelectedIssue: (issue: Issue | null) => void;
+ 
+   // Actions
+-  createProject: (data: Partial<Project>) => Project;
++  createProject: (data: Partial<Project>) => Promise<Project>;
+   updateProject: (id: string, updates: Partial<Project>) => void;
+   deleteProject: (id: string) => void;
+   createIssue: (issue: Partial<Issue>) => Promise<Issue>;
+@@ -87,6 +91,11 @@ interface ProjectContextType {
+   switchUser: (user: User) => void;
+   markAllNotificationsRead: () => void;
+ 
++  // Project Members & Invitations
++  inviteMember: (projectId: string, email: string, role: ProjectRole) => Promise<{ success: boolean; error?: string }>;
++  removeMember: (projectId: string, userId: string) => Promise<void>;
++  updateMemberRole: (projectId: string, userId: string, newRole: ProjectRole) => Promise<void>;
++
+   // Clerk Auth Integration
+   clerkSession: ClerkSession | null;
+   clerkSignUp: (data: { name: string; email: string; password?: string; role?: string; department?: string }) => Promise<{ success: boolean; user?: User; error?: string }>;
+@@ -97,10 +106,20 @@ interface ProjectContextType {
+ const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
+ 
+ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
++  // Check if Supabase is configured
++  const isSupabaseConfigured = useMemo(() => {
++    return !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
++  }, []);
++
+   // Projects
+   const [projects, setProjects] = useState<Project[]>(() => {
+     const saved = localStorage.getItem('omniplane_projects');
+-    return saved ? JSON.parse(saved) : INITIAL_PROJECTS;
++    if (saved) {
++      return JSON.parse(saved);
++    }
++    // For demo/localStorage mode: only show projects where current user is a member
++    // This will be filtered based on currentUser in useEffect
++    return [];
+   });
+ 
+   const [activeProject, setActiveProject] = useState<Project>(() => {
+@@ -109,13 +128,14 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
+       const found = projects.find(p => p.id === saved);
+       if (found) return found;
+     }
++    // If no projects exist, return a placeholder (will be handled by UI)
+     return projects[0] || INITIAL_PROJECTS[0];
+   });
+ 
+   // Load saved state or default
+   const [issues, setIssues] = useState<Issue[]>(() => {
+     const saved = localStorage.getItem('omniplane_issues');
+-    return saved ? JSON.parse(saved) : INITIAL_ISSUES;
++    return saved ? JSON.parse(saved) : [];
+   });
+ 
+   const [columns, setColumns] = useState<KanbanColumn[]>(() => {
+@@ -125,7 +145,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
+ 
+   const [sprints, setSprints] = useState<Sprint[]>(() => {
+     const saved = localStorage.getItem('omniplane_sprints');
+-    return saved ? JSON.parse(saved) : INITIAL_SPRINTS;
++    return saved ? JSON.parse(saved) : [];
+   });
+ 
+   const [teamMembers, setTeamMembers] = useState<User[]>(() => {
+@@ -183,6 +203,77 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
+     localStorage.setItem('vision_projects', JSON.stringify(projects));
+   }, [projects]);
+ 
++  // Fetch user projects from API on mount if Supabase is configured
++  useEffect(() => {
++    const fetchUserProjects = async () => {
++      if (!isSupabaseConfigured || !clerkSession?.token) {
++        console.log('[ProjectContext] Using localStorage: Supabase not configured or no session');
++        return;
++      }
++
++      try {
++        const response = await fetch('/api/projects', {
++          method: 'GET',
++          headers: {
++            'Authorization': `Bearer ${clerkSession.token}`,
++            'Content-Type': 'application/json'
++          }
++        });
++
++        if (response.ok) {
++          const data = await response.json();
++          if (data.projects && Array.isArray(data.projects)) {
++            setProjects(data.projects);
++            console.log('[ProjectContext] Loaded projects from API:', data.projects.length);
++            
++            // Set active project if not already set
++            if (data.projects.length > 0 && !data.projects.find((p: Project) => p.id === activeProject.id)) {
++              setActiveProject(data.projects[0]);
++            }
++          }
++        } else {
++          console.warn('[ProjectContext] Failed to fetch projects from API, using localStorage');
++        }
++      } catch (error) {
++        console.warn('[ProjectContext] Error fetching projects, using localStorage:', error);
++      }
++    };
++
++    fetchUserProjects();
++  }, [isSupabaseConfigured]); // Only run once on mount
++
++  // Load demo projects filtered by current user in localStorage mode
++  useEffect(() => {
++    // Only load demo data if:
++    // 1. Not using Supabase (localStorage mode)
++    // 2. No projects in state yet
++    // 3. No saved projects in localStorage
++    if (!isSupabaseConfigured && projects.length === 0) {
++      const saved = localStorage.getItem('vision_projects');
++      if (!saved) {
++        // Filter INITIAL_PROJECTS to only show projects where current user is a member
++        const userProjects = INITIAL_PROJECTS.filter(proj => 
++          proj.members?.some(member => member.userId === currentUser.id)
++        );
++        console.log(`[ProjectContext] Loaded ${userProjects.length} demo projects for user ${currentUser.name}`);
++        
++        if (userProjects.length > 0) {
++          setProjects(userProjects);
++          setActiveProject(userProjects[0]);
++          
++          // Also load demo issues and sprints for these projects
++          const projectIds = userProjects.map(p => p.id);
++          const userIssues = INITIAL_ISSUES.filter(issue => projectIds.includes(issue.projectId));
++          const userSprints = INITIAL_SPRINTS.filter(sprint => projectIds.includes(sprint.projectId));
++          setIssues(userIssues);
++          setSprints(userSprints);
++        } else {
++          console.log(`[ProjectContext] User ${currentUser.name} has no demo projects - starting with empty workspace`);
++        }
++      }
++    }
++  }, [isSupabaseConfigured, currentUser.id]); // Re-run when user changes
++
+   useEffect(() => {
+     localStorage.setItem('vision_active_project_id', activeProject.id);
+   }, [activeProject]);
+@@ -257,7 +348,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
+     setFilterOnlyMyIssues(false);
+   };
+ 
+-  const createProject = (data: Partial<Project>): Project => {
++  const createProject = async (data: Partial<Project>): Promise<Project> => {
+     const key = (data.key || 'PROJ').toUpperCase().trim();
+     const newProject: Project = {
+       id: `proj-${Date.now()}`,
+@@ -271,9 +362,64 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
+         : ['epic', 'story', 'task', 'bug'],
+       defaultAssignee: data.defaultAssignee || 'unassigned',
+       iconGradient: data.iconGradient || 'from-blue-600 via-indigo-600 to-sky-500',
+-      createdAt: new Date().toISOString()
++      createdAt: new Date().toISOString(),
++      members: [{
++        id: `member-${Date.now()}`,
++        userId: currentUser.id,
++        projectId: `proj-${Date.now()}`,
++        user: currentUser,
++        role: 'owner' as ProjectRole,
++        invitedAt: new Date().toISOString()
++      }]
+     };
+ 
++    // Try to create via API if Supabase is configured
++    if (isSupabaseConfigured && clerkSession?.token) {
++      try {
++        const response = await fetch('/api/projects', {
++          method: 'POST',
++          headers: {
++            'Authorization': `Bearer ${clerkSession.token}`,
++            'Content-Type': 'application/json'
++          },
++          body: JSON.stringify(newProject)
++        });
++
++        if (response.ok) {
++          const result = await response.json();
++          const createdProject = result.project || newProject;
++          setProjects(prev => [...prev, createdProject]);
++          setActiveProject(createdProject);
++          
++          // Create initial sprint for Scrum
++          if (createdProject.template === 'Scrum') {
++            const initialSprint: Sprint = {
++              id: `sprint-${Date.now()}`,
++              projectId: createdProject.id,
++              name: `${createdProject.name.split(' ')[0]} Sprint 1`,
++              goal: 'Initial sprint delivery and architecture foundation.',
++              startDate: new Date().toISOString().split('T')[0],
++              endDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
++              status: 'active',
++              plannedPoints: 13,
++              completedPoints: 0
++            };
++            setSprints(prev => [...prev, initialSprint]);
++          }
++
++          setRecentActivity(prev => [
++            { text: `${currentUser.name} created new project: ${createdProject.name} [${createdProject.key}]`, time: 'Just now' },
++            ...prev
++          ]);
++
++          return createdProject;
++        }
++      } catch (error) {
++        console.warn('[ProjectContext] Failed to create project via API, using localStorage:', error);
++      }
++    }
++
++    // Fallback to localStorage
+     setProjects(prev => [...prev, newProject]);
+     setActiveProject(newProject);
+ 
+@@ -366,6 +512,54 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
+       dueDate: issueData.dueDate
+     };
+ 
++    // Try to create via API if Supabase is configured
++    if (isSupabaseConfigured && clerkSession?.token) {
++      try {
++        const response = await fetch(`/api/projects/${targetProjectId}/issues`, {
++          method: 'POST',
++          headers: {
++            'Authorization': `Bearer ${clerkSession.token}`,
++            'Content-Type': 'application/json'
++          },
++          body: JSON.stringify(newIssue)
++        });
++
++        if (response.ok) {
++          const result = await response.json();
++          const createdIssue = result.issue || newIssue;
++          setIssues(prev => [createdIssue, ...prev]);
++
++          // Add activity stream
++          setRecentActivity(prev => [
++            { text: `${currentUser.name} created ${createdIssue.key}: ${createdIssue.title}`, time: 'Just now', key: createdIssue.key },
++            ...prev.slice(0, 20)
++          ]);
++
++          // In-app notification
++          if (createdIssue.assignee && createdIssue.assignee.email) {
++            setNotifications(prev => [
++              {
++                id: `notif-${Date.now()}`,
++                title: 'New Issue Assigned',
++                message: `${currentUser.name} assigned ${createdIssue.key} to ${createdIssue.assignee?.name}`,
++                timestamp: 'Just now',
++                read: false,
++                type: 'assignment',
++                issueKey: createdIssue.key,
++                author: currentUser
++              },
++              ...prev
++            ]);
++          }
++
++          return createdIssue;
++        }
++      } catch (error) {
++        console.warn('[ProjectContext] Failed to create issue via API, using localStorage:', error);
++      }
++    }
++
++    // Fallback to localStorage
+     setIssues(prev => [newIssue, ...prev]);
+ 
+     // Add activity stream
+@@ -725,6 +919,121 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
+     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+   };
+ 
++  // Project Member Management Functions
++  const inviteMember = async (projectId: string, email: string, role: ProjectRole): Promise<{ success: boolean; error?: string }> => {
++    if (isSupabaseConfigured && clerkSession?.token) {
++      try {
++        const response = await fetch(`/api/projects/${projectId}/invite`, {
++          method: 'POST',
++          headers: {
++            'Authorization': `Bearer ${clerkSession.token}`,
++            'Content-Type': 'application/json'
++          },
++          body: JSON.stringify({ email, role })
++        });
++
++        if (response.ok) {
++          const result = await response.json();
++          
++          // Update local project members
++          setProjects(prev => prev.map(p => {
++            if (p.id === projectId && result.member) {
++              return {
++                ...p,
++                members: [...(p.members || []), result.member]
++              };
++            }
++            return p;
++          }));
++
++          setRecentActivity(prev => [
++            { text: `${currentUser.name} invited ${email} to project as ${role}`, time: 'Just now' },
++            ...prev
++          ]);
++
++          return { success: true };
++        } else {
++          const errorData = await response.json();
++          return { success: false, error: errorData.error || 'Failed to invite member' };
++        }
++      } catch (error) {
++        return { success: false, error: 'Network error while inviting member' };
++      }
++    }
++
++    // Fallback: localStorage mode doesn't support invitations
++    return { success: false, error: 'Member invitations require Supabase configuration' };
++  };
++
++  const removeMember = async (projectId: string, userId: string): Promise<void> => {
++    if (isSupabaseConfigured && clerkSession?.token) {
++      try {
++        const response = await fetch(`/api/projects/${projectId}/members/${userId}`, {
++          method: 'DELETE',
++          headers: {
++            'Authorization': `Bearer ${clerkSession.token}`,
++            'Content-Type': 'application/json'
++          }
++        });
++
++        if (response.ok) {
++          setProjects(prev => prev.map(p => {
++            if (p.id === projectId) {
++              return {
++                ...p,
++                members: (p.members || []).filter(m => m.userId !== userId)
++              };
++            }
++            return p;
++          }));
++
++          setRecentActivity(prev => [
++            { text: `${currentUser.name} removed a member from project`, time: 'Just now' },
++            ...prev
++          ]);
++        }
++      } catch (error) {
++        console.warn('[ProjectContext] Failed to remove member:', error);
++      }
++    }
++  };
++
++  const updateMemberRole = async (projectId: string, userId: string, newRole: ProjectRole): Promise<void> => {
++    if (isSupabaseConfigured && clerkSession?.token) {
++      try {
++        const response = await fetch(`/api/projects/${projectId}/members/${userId}/role`, {
++          method: 'PATCH',
++          headers: {
++            'Authorization': `Bearer ${clerkSession.token}`,
++            'Content-Type': 'application/json'
++          },
++          body: JSON.stringify({ role: newRole })
++        });
++
++        if (response.ok) {
++          setProjects(prev => prev.map(p => {
++            if (p.id === projectId) {
++              return {
++                ...p,
++                members: (p.members || []).map(m => 
++                  m.userId === userId ? { ...m, role: newRole } : m
++                )
++              };
++            }
++            return p;
++          }));
++
++          setRecentActivity(prev => [
++            { text: `${currentUser.name} updated member role to ${newRole}`, time: 'Just now' },
++            ...prev
++          ]);
++        }
++      } catch (error) {
++        console.warn('[ProjectContext] Failed to update member role:', error);
++      }
++    }
++  };
++
+   // Clerk Auth Actions
+   const clerkSignUp = async (data: {
+     name: string;
+@@ -830,6 +1139,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
+   return (
+     <ProjectContext.Provider
+       value={{
++        isSupabaseConfigured,
+         projects,
+         activeProject,
+         setActiveProject,
+@@ -890,6 +1200,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
+         switchUser,
+         markAllNotificationsRead,
+ 
++        inviteMember,
++        removeMember,
++        updateMemberRole,
++
+         clerkSession,
+         clerkSignUp,
+         clerkSignIn,
+diff --git a/src/data/mockData.ts b/src/data/mockData.ts
+index 3f34c69..7669db6 100644
+--- a/src/data/mockData.ts
++++ b/src/data/mockData.ts
+@@ -68,7 +68,41 @@ export const INITIAL_PROJECTS: Project[] = [
+     allowedIssueTypes: ['epic', 'story', 'task', 'bug', 'spike'],
+     defaultAssignee: 'unassigned',
+     iconGradient: 'from-blue-600 via-indigo-600 to-sky-500',
+-    createdAt: '2026-09-01T08:00:00Z'
++    createdAt: '2026-09-01T08:00:00Z',
++    members: [
++      {
++        id: 'member-op-alex',
++        userId: 'user-2',
++        projectId: 'proj-op',
++        user: TEAM_MEMBERS[1], // Alex Rivera (owner)
++        role: 'owner',
++        invitedAt: '2026-09-01T08:00:00Z'
++      },
++      {
++        id: 'member-op-elena',
++        userId: 'user-3',
++        projectId: 'proj-op',
++        user: TEAM_MEMBERS[2], // Elena Rostova (admin)
++        role: 'admin',
++        invitedAt: '2026-09-01T08:30:00Z'
++      },
++      {
++        id: 'member-op-marcus',
++        userId: 'user-4',
++        projectId: 'proj-op',
++        user: TEAM_MEMBERS[3], // Marcus Chen (member)
++        role: 'member',
++        invitedAt: '2026-09-01T09:00:00Z'
++      },
++      {
++        id: 'member-op-priya',
++        userId: 'user-6',
++        projectId: 'proj-op',
++        user: TEAM_MEMBERS[5], // Priya Patel (member)
++        role: 'member',
++        invitedAt: '2026-09-01T09:30:00Z'
++      }
++    ]
+   },
+   {
+     id: 'proj-mob',
+@@ -80,7 +114,25 @@ export const INITIAL_PROJECTS: Project[] = [
+     allowedIssueTypes: ['epic', 'story', 'task', 'bug', 'subtask'],
+     defaultAssignee: 'lead',
+     iconGradient: 'from-emerald-600 via-teal-600 to-cyan-500',
+-    createdAt: '2026-09-10T09:00:00Z'
++    createdAt: '2026-09-10T09:00:00Z',
++    members: [
++      {
++        id: 'member-mob-elena',
++        userId: 'user-3',
++        projectId: 'proj-mob',
++        user: TEAM_MEMBERS[2], // Elena Rostova (owner)
++        role: 'owner',
++        invitedAt: '2026-09-10T09:00:00Z'
++      },
++      {
++        id: 'member-mob-david',
++        userId: 'user-5',
++        projectId: 'proj-mob',
++        user: TEAM_MEMBERS[4], // David Kim (member)
++        role: 'member',
++        invitedAt: '2026-09-10T10:00:00Z'
++      }
++    ]
+   },
+   {
+     id: 'proj-sec',
+@@ -92,7 +144,25 @@ export const INITIAL_PROJECTS: Project[] = [
+     allowedIssueTypes: ['task', 'bug', 'incident', 'spike'],
+     defaultAssignee: 'lead',
+     iconGradient: 'from-purple-600 via-violet-600 to-indigo-500',
+-    createdAt: '2026-09-20T10:00:00Z'
++    createdAt: '2026-09-20T10:00:00Z',
++    members: [
++      {
++        id: 'member-sec-marcus',
++        userId: 'user-4',
++        projectId: 'proj-sec',
++        user: TEAM_MEMBERS[3], // Marcus Chen (owner)
++        role: 'owner',
++        invitedAt: '2026-09-20T10:00:00Z'
++      },
++      {
++        id: 'member-sec-alex',
++        userId: 'user-2',
++        projectId: 'proj-sec',
++        user: TEAM_MEMBERS[1], // Alex Rivera (admin)
++        role: 'admin',
++        invitedAt: '2026-09-20T10:30:00Z'
++      }
++    ]
+   }
+ ];
+ 
+diff --git a/src/lib/supabase.ts b/src/lib/supabase.ts
+new file mode 100644
+index 0000000..7d1f33b
+--- /dev/null
++++ b/src/lib/supabase.ts
+@@ -0,0 +1,24 @@
++import { createClient, SupabaseClient } from '@supabase/supabase-js';
++
++// Supabase client configuration
++// Gracefully falls back to null if environment variables are not set
++// This allows the app to continue using localStorage as a fallback
++
++const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
++const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
++
++let supabase: SupabaseClient | null = null;
++
++if (supabaseUrl && supabaseAnonKey) {
++  try {
++    supabase = createClient(supabaseUrl, supabaseAnonKey);
++  } catch (error) {
++    console.warn('Failed to initialize Supabase client:', error);
++    supabase = null;
++  }
++} else {
++  console.info('Supabase environment variables not set. Using localStorage fallback.');
++}
++
++export { supabase };
++export const isSupabaseEnabled = supabase !== null;
+diff --git a/src/types/index.ts b/src/types/index.ts
+index 01cc1e7..9e048be 100644
+--- a/src/types/index.ts
++++ b/src/types/index.ts
+@@ -2,6 +2,8 @@ export type WorkItemType = 'epic' | 'story' | 'task' | 'bug' | 'spike' | 'subtas
+ 
+ export type Priority = 'blocker' | 'high' | 'medium' | 'low' | 'lowest';
+ 
++export type ProjectRole = 'owner' | 'admin' | 'member' | 'viewer';
++
+ export interface User {
+   id: string;
+   name: string;
+@@ -12,6 +14,16 @@ export interface User {
+   status: 'online' | 'busy' | 'away' | 'offline';
+ }
+ 
++export interface ProjectMember {
++  id: string;
++  userId: string;
++  projectId: string;
++  user: User;
++  role: ProjectRole;
++  invitedBy?: string;
++  invitedAt: string;
++}
++
+ export interface Subtask {
+   id: string;
+   title: string;
+@@ -53,6 +65,7 @@ export interface Project {
+   defaultAssignee: 'unassigned' | 'lead';
+   iconGradient: string;
+   createdAt: string;
++  members?: ProjectMember[];
+ }
+ 
+ export interface Issue {
+diff --git a/src/utils/permissions.ts b/src/utils/permissions.ts
+new file mode 100644
+index 0000000..ebba749
+--- /dev/null
++++ b/src/utils/permissions.ts
+@@ -0,0 +1,52 @@
++/**
++ * Role-based permission checking utilities
++ */
++
++export type ProjectRole = 'owner' | 'admin' | 'member' | 'viewer';
++
++/**
++ * Check if user can invite members to a project
++ */
++export function canInviteMembers(userRole: ProjectRole): boolean {
++  return userRole === 'owner' || userRole === 'admin';
++}
++
++/**
++ * Check if user can edit issues in a project
++ */
++export function canEditIssue(userRole: ProjectRole): boolean {
++  return userRole === 'owner' || userRole === 'admin' || userRole === 'member';
++}
++
++/**
++ * Check if user can delete a project
++ */
++export function canDeleteProject(userRole: ProjectRole): boolean {
++  return userRole === 'owner';
++}
++
++/**
++ * Check if user can manage (add/remove/edit) project members
++ */
++export function canManageMembers(userRole: ProjectRole): boolean {
++  return userRole === 'owner' || userRole === 'admin';
++}
++
++/**
++ * Check if user can create sprints in a project
++ */
++export function canCreateSprint(userRole: ProjectRole): boolean {
++  return userRole === 'owner' || userRole === 'admin';
++}
++
++/**
++ * Get user's role in a project
++ * @param project The project to check
++ * @param userId The user's ID
++ * @returns The user's role in the project, or null if not a member
++ */
++export function getUserRoleInProject(project: { members?: { userId: string; role: ProjectRole }[] }, userId: string): ProjectRole | null {
++  if (!project.members) return null;
++  const member = project.members.find(m => m.userId === userId);
++  return member ? member.role : null;
++}

@@ -9,7 +9,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- =====================================================
 -- Stores user profiles synced from Clerk authentication
 CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT uuid_genera/*  */te_v4(),
   clerk_user_id TEXT UNIQUE NOT NULL,
   email TEXT UNIQUE NOT NULL,
   name TEXT,
@@ -106,6 +106,22 @@ CREATE TABLE IF NOT EXISTS comments (
 );
 
 -- =====================================================
+-- INVITATION_TOKENS TABLE
+-- =====================================================
+-- Stores pending invitations for users who don't have accounts yet
+CREATE TABLE IF NOT EXISTS invitation_tokens (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  token TEXT UNIQUE NOT NULL,
+  email TEXT NOT NULL,
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'member', 'viewer')),
+  invited_by UUID NOT NULL REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  accepted_at TIMESTAMPTZ
+);
+
+-- =====================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- =====================================================
 
@@ -116,6 +132,7 @@ ALTER TABLE project_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE issues ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sprints ENABLE ROW LEVEL SECURITY;
 ALTER TABLE comments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invitation_tokens ENABLE ROW LEVEL SECURITY;
 
 -- -----------------------------------------------------
 -- USERS TABLE POLICIES
@@ -348,6 +365,34 @@ CREATE POLICY "comments_delete_policy" ON comments
   FOR DELETE
   USING (author_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text));
 
+-- -----------------------------------------------------
+-- INVITATION_TOKENS TABLE POLICIES
+-- -----------------------------------------------------
+-- Users can view invitations sent to their email
+CREATE POLICY "invitation_tokens_select_policy" ON invitation_tokens
+  FOR SELECT
+  USING (
+    email = (SELECT email FROM users WHERE clerk_user_id = auth.uid()::text)
+    OR invited_by = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
+  );
+
+-- Project admins/owners can create invitation tokens
+CREATE POLICY "invitation_tokens_insert_policy" ON invitation_tokens
+  FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM project_members
+      WHERE project_members.project_id = invitation_tokens.project_id
+        AND project_members.user_id = (SELECT id FROM users WHERE clerk_user_id = auth.uid()::text)
+        AND project_members.role IN ('owner', 'admin')
+    )
+  );
+
+-- System can update invitation tokens (mark as accepted)
+CREATE POLICY "invitation_tokens_update_policy" ON invitation_tokens
+  FOR UPDATE
+  USING (true);
+
 -- =====================================================
 -- INDEXES FOR PERFORMANCE
 -- =====================================================
@@ -364,3 +409,6 @@ CREATE INDEX IF NOT EXISTS idx_issues_sprint_id ON issues(sprint_id);
 CREATE INDEX IF NOT EXISTS idx_sprints_project_id ON sprints(project_id);
 CREATE INDEX IF NOT EXISTS idx_comments_issue_id ON comments(issue_id);
 CREATE INDEX IF NOT EXISTS idx_comments_author_id ON comments(author_id);
+CREATE INDEX IF NOT EXISTS idx_invitation_tokens_token ON invitation_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_invitation_tokens_email ON invitation_tokens(email);
+CREATE INDEX IF NOT EXISTS idx_invitation_tokens_project_id ON invitation_tokens(project_id);

@@ -9,6 +9,7 @@ import { createClient } from '@supabase/supabase-js';
 // Type extension for Express Request with Clerk auth
 interface AuthRequest extends express.Request {
   auth: SessionAuthObject;
+  customUserId?: string;
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -188,20 +189,71 @@ activeSessions.set(defaultSessionToken, {
   expiresAt: new Date(Date.now() + 86400000 * 7).toISOString()
 });
 
+// Hybrid auth middleware - accepts both Clerk JWT and custom session tokens
+const flexAuth = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const authReq = req as AuthRequest;
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+  
+  if (token && activeSessions.has(token)) {
+    // Custom session token - attach synthetic auth info
+    const session = activeSessions.get(token)!;
+    
+    // Check expiry
+    if (new Date(session.expiresAt) < new Date()) {
+      return res.status(401).json({ success: false, error: 'Session expired' });
+    }
+    
+    const user = clerkUsers.find(u => u.id === session.userId);
+    authReq.customUserId = session.userId;
+    (authReq as any).resolvedEmail = user?.email || null;
+    return next();
+  }
+  
+  // Real Clerk token - use requireAuth
+  return requireAuth()(req, res, next);
+};
+
 // ==========================================
 // SUPABASE DATA API ROUTES
 // ==========================================
 
-// Helper function to get Supabase user ID from Clerk user ID
-async function getSupabaseUserId(clerkUserId: string): Promise<string | null> {
+// Helper function to get Supabase user ID from Clerk user ID or custom session
+async function getSupabaseUserId(clerkUserId: string | undefined | null, customUserId: string | undefined | null): Promise<string | null> {
   if (!supabase) return null;
   
-  const { data, error } = await supabase
-    .from('users')
-    .select('id')
-    .eq('clerk_user_id', clerkUserId!)
-    .single();
-  
+  // Try Clerk user ID first
+  if (clerkUserId) {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id')
+      .eq('clerk_user_id', clerkUserId)
+      .single();
+    
+    if (data) return (data as any).id;
+  }
+
+  // Fallback: custom session user - lookup by email
+  if (customUserId) {
+    const customUser = clerkUsers.find(u => u.id === customUserId);
+    if (customUser) {
+      const { data } = await supabase
+        .from('users')
+        .select('id')
+        .eq('email', customUser.email)
+        .single();
+      
+      if (data) return (data as any).id;
+    }
+  }
+
+  return null;
+}
+
+// Helper function to get Supabase user ID by email
+async function getSupabaseUserIdByEmail(email: string | null | undefined): Promise<string | null> {
+  if (!supabase || !email) return null;
+  const { data, error } = await supabase.from('users').select('id').eq('email', email).single();
   if (error || !data) return null;
   return (data as any).id;
 }
@@ -242,8 +294,9 @@ app.post('/api/projects', requireAuth(), upsertClerkUser, async (req, res) => {
 
   try {
     const authReq = req as AuthRequest;
-    const clerkUserId = authReq.auth.userId!;
-    const supabaseUserId = await getSupabaseUserId(clerkUserId);
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
     
     if (!supabaseUserId) {
       return res.status(400).json({ success: false, error: 'User not found in database' });
@@ -300,8 +353,10 @@ app.get('/api/projects', requireAuth(), upsertClerkUser, async (req, res) => {
   }
 
   try {
-    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
-    const supabaseUserId = await getSupabaseUserId(clerkUserId);
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
     
     if (!supabaseUserId) {
       return res.json({ success: true, projects: [] });
@@ -363,15 +418,22 @@ app.get('/api/projects', requireAuth(), upsertClerkUser, async (req, res) => {
 });
 
 // 3. POST /api/projects/:id/invite - Invite user to project
-app.post('/api/projects/:id/invite', requireAuth(), upsertClerkUser, async (req, res) => {
+app.post('/api/projects/:id/invite', flexAuth, upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
   }
 
   try {
     const projectId = req.params.id;
-    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
-    const supabaseUserId = await getSupabaseUserId(clerkUserId);
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const resolvedEmail = (authReq as any).resolvedEmail;
+    
+    // Get Supabase user ID
+    const supabaseUserId = resolvedEmail 
+      ? await getSupabaseUserIdByEmail(resolvedEmail)
+      : await getSupabaseUserId(clerkUserId, customUserId);
     
     if (!supabaseUserId) {
       return res.status(400).json({ success: false, error: 'User not found in database' });
@@ -392,14 +454,64 @@ app.post('/api/projects/:id/invite', requireAuth(), upsertClerkUser, async (req,
     // Look up invited user by email
     const { data: invitedUser, error: userError } = await supabase
       .from('users')
-      .select('id')
+      .select('id, name')
       .eq('email', email)
       .single();
 
     if (userError || !invitedUser) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'User with this email not found. They need to sign up first.' 
+      // User doesn't exist yet - create invitation token
+      const crypto = await import('crypto');
+      const token = crypto.randomUUID();
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
+      const { error: tokenError } = await supabase
+        .from('invitation_tokens')
+        .insert({
+          token,
+          email,
+          project_id: projectId,
+          role,
+          invited_by: supabaseUserId,
+          expires_at: expiresAt.toISOString()
+        } as any);
+
+      if (tokenError) {
+        console.error('[Supabase] Error creating invitation token:', tokenError);
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Failed to create invitation' 
+        });
+      }
+
+      // Get project and inviter details for email
+      const { data: project } = await supabase
+        .from('projects')
+        .select('name, key')
+        .eq('id', projectId)
+        .single();
+
+      const { data: inviter } = await supabase
+        .from('users')
+        .select('name')
+        .eq('id', supabaseUserId)
+        .single();
+
+      // Send invitation email
+      const { sendInvitationEmail } = await import('./src/lib/emailService.js');
+      const appUrl = process.env.APP_URL || 'http://localhost:5173';
+      await sendInvitationEmail({
+        to: email,
+        projectName: (project as any)?.name || 'Project',
+        inviterName: (inviter as any)?.name || 'A team member',
+        role,
+        inviteLink: `${appUrl}/accept-invite?token=${token}`,
+        isNewUser: true
+      });
+
+      return res.json({ 
+        success: true, 
+        pendingInvite: true,
+        message: 'Invitation sent. User will be added when they sign up.' 
       });
     }
 
@@ -430,17 +542,47 @@ app.post('/api/projects/:id/invite', requireAuth(), upsertClerkUser, async (req,
       return res.status(400).json({ success: false, error: insertError.message });
     }
 
-    // Return updated members list
-    const { data: members } = await supabase
+    // Get the newly added member
+    const { data: newMember } = await supabase
       .from('project_members')
       .select(`
+        id,
+        user_id,
+        project_id,
         role,
         invited_at,
         user:users!project_members_user_id_fkey(id, name, email, avatar, role, department)
       `)
-      .eq('project_id', projectId);
+      .eq('project_id', projectId)
+      .eq('user_id', (invitedUser as any).id)
+      .single();
 
-    res.json({ success: true, members: members || [] });
+    // Get project details for email
+    const { data: project } = await supabase
+      .from('projects')
+      .select('name, key')
+      .eq('id', projectId)
+      .single();
+
+    const { data: inviter } = await supabase
+      .from('users')
+      .select('name')
+      .eq('id', supabaseUserId)
+      .single();
+
+    // Send invitation email
+    const { sendInvitationEmail } = await import('./src/lib/emailService.js');
+    const appUrl = process.env.APP_URL || 'http://localhost:5173';
+    await sendInvitationEmail({
+      to: email,
+      projectName: (project as any)?.name || 'Project',
+      inviterName: (inviter as any)?.name || 'A team member',
+      role,
+      inviteLink: `${appUrl}/projects`,
+      isNewUser: false
+    });
+
+    res.json({ success: true, member: newMember || null });
   } catch (error) {
     console.error('[API] Error inviting member:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
@@ -455,8 +597,10 @@ app.get('/api/projects/:id/members', requireAuth(), upsertClerkUser, async (req,
 
   try {
     const projectId = req.params.id;
-    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
-    const supabaseUserId = await getSupabaseUserId(clerkUserId);
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
     
     if (!supabaseUserId) {
       return res.status(400).json({ success: false, error: 'User not found in database' });
@@ -490,15 +634,21 @@ app.get('/api/projects/:id/members', requireAuth(), upsertClerkUser, async (req,
 });
 
 // 5. DELETE /api/projects/:id/members/:userId - Remove member from project
-app.delete('/api/projects/:id/members/:userId', requireAuth(), upsertClerkUser, async (req, res) => {
+app.delete('/api/projects/:id/members/:userId', flexAuth, upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
   }
 
   try {
     const { id: projectId, userId: targetUserId } = req.params;
-    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
-    const supabaseUserId = await getSupabaseUserId(clerkUserId);
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const resolvedEmail = (authReq as any).resolvedEmail;
+    
+    const supabaseUserId = resolvedEmail 
+      ? await getSupabaseUserIdByEmail(resolvedEmail)
+      : await getSupabaseUserId(clerkUserId, customUserId);
     
     if (!supabaseUserId) {
       return res.status(400).json({ success: false, error: 'User not found in database' });
@@ -549,16 +699,22 @@ app.delete('/api/projects/:id/members/:userId', requireAuth(), upsertClerkUser, 
   }
 });
 
-// 6. PATCH /api/projects/:id/members/:userId - Update member role
-app.patch('/api/projects/:id/members/:userId', requireAuth(), upsertClerkUser, async (req, res) => {
+// 6. PATCH /api/projects/:id/members/:userId/role - Update member role
+app.patch('/api/projects/:id/members/:userId/role', flexAuth, upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
   }
 
   try {
     const { id: projectId, userId: targetUserId } = req.params;
-    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
-    const supabaseUserId = await getSupabaseUserId(clerkUserId);
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const resolvedEmail = (authReq as any).resolvedEmail;
+    
+    const supabaseUserId = resolvedEmail 
+      ? await getSupabaseUserIdByEmail(resolvedEmail)
+      : await getSupabaseUserId(clerkUserId, customUserId);
     
     if (!supabaseUserId) {
       return res.status(400).json({ success: false, error: 'User not found in database' });
@@ -609,8 +765,10 @@ app.get('/api/projects/:id/issues', requireAuth(), upsertClerkUser, async (req, 
 
   try {
     const projectId = req.params.id;
-    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
-    const supabaseUserId = await getSupabaseUserId(clerkUserId);
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
     
     if (!supabaseUserId) {
       return res.status(400).json({ success: false, error: 'User not found in database' });
@@ -652,8 +810,10 @@ app.post('/api/projects/:id/issues', requireAuth(), upsertClerkUser, async (req,
 
   try {
     const projectId = req.params.id;
-    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
-    const supabaseUserId = await getSupabaseUserId(clerkUserId);
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
     
     if (!supabaseUserId) {
       return res.status(400).json({ success: false, error: 'User not found in database' });
@@ -752,8 +912,10 @@ app.patch('/api/issues/:issueId', requireAuth(), upsertClerkUser, async (req, re
 
   try {
     const issueId = req.params.issueId;
-    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
-    const supabaseUserId = await getSupabaseUserId(clerkUserId);
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
     
     if (!supabaseUserId) {
       return res.status(400).json({ success: false, error: 'User not found in database' });
@@ -815,8 +977,10 @@ app.delete('/api/issues/:issueId', requireAuth(), upsertClerkUser, async (req, r
 
   try {
     const issueId = req.params.issueId;
-    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
-    const supabaseUserId = await getSupabaseUserId(clerkUserId);
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
     
     if (!supabaseUserId) {
       return res.status(400).json({ success: false, error: 'User not found in database' });
@@ -865,8 +1029,10 @@ app.get('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req,
 
   try {
     const projectId = req.params.id;
-    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
-    const supabaseUserId = await getSupabaseUserId(clerkUserId);
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
     
     if (!supabaseUserId) {
       return res.status(400).json({ success: false, error: 'User not found in database' });
@@ -904,8 +1070,10 @@ app.post('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req
 
   try {
     const projectId = req.params.id;
-    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
-    const supabaseUserId = await getSupabaseUserId(clerkUserId);
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
     
     if (!supabaseUserId) {
       return res.status(400).json({ success: false, error: 'User not found in database' });
@@ -955,8 +1123,10 @@ app.post('/api/projects/:id/issues/:issueId/comments', requireAuth(), upsertCler
 
   try {
     const { id: projectId, issueId } = req.params;
-    const authReq = req as AuthRequest; const clerkUserId = authReq.auth.userId!;
-    const supabaseUserId = await getSupabaseUserId(clerkUserId);
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
     
     if (!supabaseUserId) {
       return res.status(400).json({ success: false, error: 'User not found in database' });
@@ -1177,6 +1347,101 @@ app.post('/api/auth/logout', (req, res) => {
     activeSessions.delete(token);
   }
   res.json({ success: true, message: 'Logged out successfully.' });
+});
+
+// 6. Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), supabase: !!supabase });
+});
+
+// 7. GET /api/invitations/:token - Verify invitation token
+app.get('/api/invitations/:token', async (req, res) => {
+  if (!supabase) return res.status(503).json({ success: false, error: 'Supabase not configured' });
+  
+  const { token } = req.params;
+  const { data, error } = await supabase
+    .from('invitation_tokens')
+    .select(`*, project:projects(name, key)`)
+    .eq('token', token)
+    .is('accepted_at', null)
+    .single();
+  
+  if (error || !data) {
+    return res.status(404).json({ success: false, error: 'Invitation not found or already used' });
+  }
+  
+  const inv = data as any;
+  if (inv.expires_at && new Date(inv.expires_at) < new Date()) {
+    return res.status(410).json({ success: false, error: 'Invitation has expired' });
+  }
+  
+  res.json({
+    success: true,
+    invitation: {
+      email: inv.email,
+      role: inv.role,
+      projectName: inv.project?.name,
+      projectKey: inv.project?.key
+    }
+  });
+});
+
+// 8. POST /api/invitations/:token/accept - Accept invitation token
+app.post('/api/invitations/:token/accept', flexAuth, upsertClerkUser, async (req, res) => {
+  if (!supabase) return res.status(503).json({ success: false, error: 'Supabase not configured' });
+  
+  const authReq = req as AuthRequest;
+  const clerkUserId = authReq.auth?.userId;
+  const customUserId = authReq.customUserId;
+  const resolvedEmail = (authReq as any).resolvedEmail;
+  
+  const supabaseUserId = resolvedEmail 
+    ? await getSupabaseUserIdByEmail(resolvedEmail)
+    : await getSupabaseUserId(clerkUserId, customUserId);
+  
+  if (!supabaseUserId) {
+    return res.status(400).json({ success: false, error: 'User not found' });
+  }
+  
+  const { token } = req.params;
+  const { data: inv, error } = await supabase
+    .from('invitation_tokens')
+    .select('*')
+    .eq('token', token)
+    .is('accepted_at', null)
+    .single();
+  
+  if (error || !inv) {
+    return res.status(404).json({ success: false, error: 'Invitation not found or already used' });
+  }
+  
+  const invitation = inv as any;
+  if (invitation.expires_at && new Date(invitation.expires_at) < new Date()) {
+    return res.status(410).json({ success: false, error: 'Invitation expired' });
+  }
+  
+  // Add user to project
+  const { error: memberError } = await supabase
+    .from('project_members')
+    .insert({
+      project_id: invitation.project_id,
+      user_id: supabaseUserId,
+      role: invitation.role,
+      invited_by: invitation.invited_by
+    } as any);
+  
+  if (memberError && !memberError.message.includes('duplicate')) {
+    return res.status(400).json({ success: false, error: memberError.message });
+  }
+  
+  // Mark as accepted
+  await supabase
+    .from('invitation_tokens')
+    // @ts-ignore - Supabase generated types not available for invitation_tokens
+    .update({ accepted_at: new Date().toISOString() })
+    .eq('token', token);
+  
+  res.json({ success: true, projectId: invitation.project_id });
 });
 
 // Configure Vite integration
