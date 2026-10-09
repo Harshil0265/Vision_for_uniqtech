@@ -114,7 +114,12 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   // Projects
   const [projects, setProjects] = useState<Project[]>(() => {
     const saved = localStorage.getItem('omniplane_projects');
-    return saved ? JSON.parse(saved) : INITIAL_PROJECTS;
+    if (saved) {
+      return JSON.parse(saved);
+    }
+    // For demo/localStorage mode: only show projects where current user is a member
+    // This will be filtered based on currentUser in useEffect
+    return [];
   });
 
   const [activeProject, setActiveProject] = useState<Project>(() => {
@@ -123,13 +128,14 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       const found = projects.find(p => p.id === saved);
       if (found) return found;
     }
+    // If no projects exist, return a placeholder (will be handled by UI)
     return projects[0] || INITIAL_PROJECTS[0];
   });
 
   // Load saved state or default
   const [issues, setIssues] = useState<Issue[]>(() => {
     const saved = localStorage.getItem('omniplane_issues');
-    return saved ? JSON.parse(saved) : INITIAL_ISSUES;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [columns, setColumns] = useState<KanbanColumn[]>(() => {
@@ -139,7 +145,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const [sprints, setSprints] = useState<Sprint[]>(() => {
     const saved = localStorage.getItem('omniplane_sprints');
-    return saved ? JSON.parse(saved) : INITIAL_SPRINTS;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [teamMembers, setTeamMembers] = useState<User[]>(() => {
@@ -235,6 +241,38 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     fetchUserProjects();
   }, [isSupabaseConfigured]); // Only run once on mount
+
+  // Load demo projects filtered by current user in localStorage mode
+  useEffect(() => {
+    // Only load demo data if:
+    // 1. Not using Supabase (localStorage mode)
+    // 2. No projects in state yet
+    // 3. No saved projects in localStorage
+    if (!isSupabaseConfigured && projects.length === 0) {
+      const saved = localStorage.getItem('vision_projects');
+      if (!saved) {
+        // Filter INITIAL_PROJECTS to only show projects where current user is a member
+        const userProjects = INITIAL_PROJECTS.filter(proj => 
+          proj.members?.some(member => member.userId === currentUser.id)
+        );
+        console.log(`[ProjectContext] Loaded ${userProjects.length} demo projects for user ${currentUser.name}`);
+        
+        if (userProjects.length > 0) {
+          setProjects(userProjects);
+          setActiveProject(userProjects[0]);
+          
+          // Also load demo issues and sprints for these projects
+          const projectIds = userProjects.map(p => p.id);
+          const userIssues = INITIAL_ISSUES.filter(issue => projectIds.includes(issue.projectId));
+          const userSprints = INITIAL_SPRINTS.filter(sprint => projectIds.includes(sprint.projectId));
+          setIssues(userIssues);
+          setSprints(userSprints);
+        } else {
+          console.log(`[ProjectContext] User ${currentUser.name} has no demo projects - starting with empty workspace`);
+        }
+      }
+    }
+  }, [isSupabaseConfigured, currentUser.id]); // Re-run when user changes
 
   useEffect(() => {
     localStorage.setItem('vision_active_project_id', activeProject.id);

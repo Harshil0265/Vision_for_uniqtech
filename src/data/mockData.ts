@@ -68,7 +68,41 @@ export const INITIAL_PROJECTS: Project[] = [
     allowedIssueTypes: ['epic', 'story', 'task', 'bug', 'spike'],
     defaultAssignee: 'unassigned',
     iconGradient: 'from-blue-600 via-indigo-600 to-sky-500',
-    createdAt: '2026-09-01T08:00:00Z'
+    createdAt: '2026-09-01T08:00:00Z',
+    members: [
+      {
+        id: 'member-op-alex',
+        userId: 'user-2',
+        projectId: 'proj-op',
+        user: TEAM_MEMBERS[1], // Alex Rivera (owner)
+        role: 'owner',
+        invitedAt: '2026-09-01T08:00:00Z'
+      },
+      {
+        id: 'member-op-elena',
+        userId: 'user-3',
+        projectId: 'proj-op',
+        user: TEAM_MEMBERS[2], // Elena Rostova (admin)
+        role: 'admin',
+        invitedAt: '2026-09-01T08:30:00Z'
+      },
+      {
+        id: 'member-op-marcus',
+        userId: 'user-4',
+        projectId: 'proj-op',
+        user: TEAM_MEMBERS[3], // Marcus Chen (member)
+        role: 'member',
+        invitedAt: '2026-09-01T09:00:00Z'
+      },
+      {
+        id: 'member-op-priya',
+        userId: 'user-6',
+        projectId: 'proj-op',
+        user: TEAM_MEMBERS[5], // Priya Patel (member)
+        role: 'member',
+        invitedAt: '2026-09-01T09:30:00Z'
+      }
+    ]
   },
   {
     id: 'proj-mob',
@@ -80,7 +114,25 @@ export const INITIAL_PROJECTS: Project[] = [
     allowedIssueTypes: ['epic', 'story', 'task', 'bug', 'subtask'],
     defaultAssignee: 'lead',
     iconGradient: 'from-emerald-600 via-teal-600 to-cyan-500',
-    createdAt: '2026-09-10T09:00:00Z'
+    createdAt: '2026-09-10T09:00:00Z',
+    members: [
+      {
+        id: 'member-mob-elena',
+        userId: 'user-3',
+        projectId: 'proj-mob',
+        user: TEAM_MEMBERS[2], // Elena Rostova (owner)
+        role: 'owner',
+        invitedAt: '2026-09-10T09:00:00Z'
+      },
+      {
+        id: 'member-mob-david',
+        userId: 'user-5',
+        projectId: 'proj-mob',
+        user: TEAM_MEMBERS[4], // David Kim (member)
+        role: 'member',
+        invitedAt: '2026-09-10T10:00:00Z'
+      }
+    ]
   },
   {
     id: 'proj-sec',
@@ -92,7 +144,25 @@ export const INITIAL_PROJECTS: Project[] = [
     allowedIssueTypes: ['task', 'bug', 'incident', 'spike'],
     defaultAssignee: 'lead',
     iconGradient: 'from-purple-600 via-violet-600 to-indigo-500',
-    createdAt: '2026-09-20T10:00:00Z'
+    createdAt: '2026-09-20T10:00:00Z',
+    members: [
+      {
+        id: 'member-sec-marcus',
+        userId: 'user-4',
+        projectId: 'proj-sec',
+        user: TEAM_MEMBERS[3], // Marcus Chen (owner)
+        role: 'owner',
+        invitedAt: '2026-09-20T10:00:00Z'
+      },
+      {
+        id: 'member-sec-alex',
+        userId: 'user-2',
+        projectId: 'proj-sec',
+        user: TEAM_MEMBERS[1], // Alex Rivera (admin)
+        role: 'admin',
+        invitedAt: '2026-09-20T10:30:00Z'
+      }
+    ]
   }
 ];
 
