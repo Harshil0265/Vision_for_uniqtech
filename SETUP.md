@@ -178,3 +178,30 @@ Your Vision project management system is ready with:
 ✅ Role-based permissions
 
 Happy project managing! 🚀
+
+---
+
+## Running the Development Environment
+
+This project requires TWO servers running simultaneously:
+
+### Terminal 1 — Backend API (Express on port 3000)
+```
+npm run dev:server
+```
+
+### Terminal 2 — Frontend (Vite on port 5173)
+```
+npm run dev:frontend
+```
+
+Open http://localhost:5173 in your browser.
+
+> **Why two terminals?** Vite proxies all `/api/*` requests to `http://localhost:3000`. If the backend is not running, any API call (inviting members, creating projects, etc.) will fail with a network error.
+
+### Inviting Members
+
+For invitations to work you also need:
+1. Both servers running (see above)
+2. A valid Supabase project with the schema applied (see Supabase Setup section)
+3. The `.env` file populated with your Supabase URL and anon key
