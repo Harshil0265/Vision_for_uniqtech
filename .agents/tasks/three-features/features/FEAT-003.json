@@ -1,0 +1,47 @@
+{
+  "id": "FEAT-003",
+  "type": "feat",
+  "description": "Enable file attachments on issues stored in Supabase Storage. Add Attachment interface and attachments array to Issue type. Add upload UI to IssueDetailModal (drag-drop zone + browse button, multi-file, 10 MB limit, progress indicator). Create server endpoints POST /api/projects/:projectId/issues/:issueId/attachments (upload to Supabase Storage bucket 'issue-attachments', insert row into attachments table), DELETE /api/projects/:projectId/issues/:issueId/attachments/:attachmentId (delete from storage + table), GET /api/projects/:projectId/issues/:issueId/attachments (list). Display attachments in IssueDetailModal with download and delete actions (role-based: viewers read-only, members/admins/owners can upload and delete). Show attachment count badge on KanbanBoard cards. In localStorage fallback mode, store attachments as base64 data URIs (capped at 1 MB per file).",
+  "status": "pending",
+  "steps": [
+    "1. Add Attachment interface to src/types/index.ts (after Issue interface): { id: string; filename: string; size: number; mimeType: string; url: string; uploadedBy: User; uploadedAt: string }. Add attachments?: Attachment[] to the Issue interface.",
+    "2. Create migration SQL artifact at h:\\vision for uniqtech\\.agents\\tasks\\attachments-migration.sql: CREATE TABLE IF NOT EXISTS attachments (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), issue_id UUID NOT NULL REFERENCES issues(id) ON DELETE CASCADE, filename TEXT NOT NULL, size INTEGER NOT NULL, mime_type TEXT, storage_path TEXT NOT NULL, url TEXT, uploaded_by UUID REFERENCES users(id), uploaded_at TIMESTAMPTZ DEFAULT NOW()); CREATE INDEX IF NOT EXISTS idx_attachments_issue_id ON attachments(issue_id);",
+    "3. Install multer package for multipart uploads: npm install multer @types/multer --save",
+    "4. Add POST /api/projects/:projectId/issues/:issueId/attachments endpoint in server.ts (after the comments endpoint, around line 1280). Use multer middleware to parse multipart/form-data. Validate file size <= 10 MB, accept images (png, jpg, jpeg, gif, webp), PDF, text, code files (js, ts, py, etc.), Office docs (docx, xlsx, pptx). Upload to Supabase Storage bucket 'issue-attachments' with path {projectId}/{issueId}/{uuid}-{originalFilename}. Insert row into attachments table. Return attachment metadata.",
+    "5. Add DELETE /api/projects/:projectId/issues/:issueId/attachments/:attachmentId endpoint in server.ts. Verify user has member/admin/owner role (not viewer). Fetch attachment row from attachments table, extract storage_path. Delete from Supabase Storage. Delete row from attachments table. Return success.",
+    "6. Add GET /api/projects/:projectId/issues/:issueId/attachments endpoint in server.ts. Verify user has project access. Select from attachments table with uploaded_by user joined. Return array.",
+    "7. Modify IssueDetailModal.tsx: add an 'Attachments' section after the subtasks section (around line 350). Render a drag-and-drop zone (use <input type='file' multiple accept='image/*,application/pdf,text/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.js,.ts,.py,.json,.xml,.yaml' hidden ref={fileInputRef} onChange={handleFileSelect} /> and a visible drop zone div with onDragOver, onDrop handlers). Add a 'Browse Files' button that triggers fileInputRef.current?.click(). On file selection, validate size <= 10 MB per file, show progress indicator, call POST /api/.../attachments with FormData. On success, fetch updated attachments list via GET. Display attached files: images as thumbnails (max 80px height), others as file-type icon + filename + size. Add download button (open URL in new tab) and delete button (only if userRole !== 'viewer' and current user is uploader or admin/owner).",
+    "8. Modify ProjectContext.tsx: in createIssue, set attachments: [] in newIssue. In updateIssue, if isSupabaseConfigured, fetch attachments via GET /api/.../attachments and merge into issue object before updating state.",
+    "9. Add attachment count badge to KanbanBoard.tsx renderCard function (around line 155): if issue.attachments && issue.attachments.length > 0, display a small badge with a paperclip icon and the count.",
+    "10. Implement localStorage fallback in ProjectContext.tsx: when uploading an attachment and !isSupabaseConfigured, read the file as base64 data URI (FileReader.readAsDataURL), check size <= 1 MB (smaller limit for localStorage), store in issue.attachments array in localStorage. When downloading, open data URI in new tab. When deleting, filter out from array.",
+    "11. Test end-to-end: upload an image to an issue, verify it appears in Supabase Storage and attachments table. Download the attachment. Delete it. Upload multiple files. Test role restrictions (viewer cannot upload/delete). Test localStorage fallback mode."
+  ],
+  "acceptance_criteria": [
+    "Attachment interface defined in src/types/index.ts",
+    "attachments array added to Issue interface",
+    "Supabase attachments table created via migration SQL",
+    "multer package installed and used for file uploads",
+    "POST /api/projects/:projectId/issues/:issueId/attachments endpoint accepts multipart/form-data, validates 10 MB limit, uploads to Supabase Storage 'issue-attachments' bucket, inserts row, returns metadata",
+    "DELETE /api/projects/:projectId/issues/:issueId/attachments/:attachmentId endpoint deletes from storage and table (role-based: members/admins/owners only)",
+    "GET /api/projects/:projectId/issues/:issueId/attachments endpoint returns attachment list with user info",
+    "IssueDetailModal has drag-drop zone and browse button for uploads, displays attachments with thumbnails/icons, download and delete actions (role-based)",
+    "KanbanBoard shows attachment count badge (paperclip icon + count) on cards with attachments",
+    "localStorage fallback stores attachments as base64 data URIs (1 MB limit per file in fallback mode)",
+    "Failed uploads show inline error without crashing the modal",
+    "npm run lint passes with no TypeScript errors"
+  ],
+  "verification": [
+    "Run `npm run lint` and confirm zero errors",
+    "Run `npm run dev` and open http://localhost:5173",
+    "Open an issue detail modal, drag-and-drop a PNG image, confirm upload progress shows, confirm image appears as thumbnail",
+    "Click download button, confirm file opens in new tab",
+    "Click delete button (if allowed), confirm attachment is removed",
+    "Upload a 15 MB file, confirm error message appears",
+    "Upload a PDF and a .docx file, confirm they display with file-type icons",
+    "Open Supabase dashboard, verify files exist in 'issue-attachments' bucket and attachments table has rows",
+    "Test as viewer role, confirm upload and delete buttons are disabled or hidden",
+    "Stop dev server, clear VITE_SUPABASE_URL env var, restart, upload a small image, confirm localStorage base64 fallback works"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

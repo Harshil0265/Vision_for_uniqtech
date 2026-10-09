@@ -88,6 +88,7 @@ export interface Issue {
   comments: CommentItem[];
   activities: ActivityItem[];
   dueDate?: string;
+  assignedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -1087,7 +1087,8 @@ app.post('/api/projects/:id/issues', requireAuth(), upsertClerkUser, async (req,
       sprint_id, 
       story_points, 
       labels, 
-      due_date 
+      due_date,
+      assigned_at 
     } = req.body;
 
     // Create issue
@@ -1107,7 +1108,8 @@ app.post('/api/projects/:id/issues', requireAuth(), upsertClerkUser, async (req,
         story_points: story_points || 0,
         labels: labels || [],
         subtasks: [],
-        due_date: due_date || null
+        due_date: due_date || null,
+        assigned_at: assigned_at || null
       } as any)
       .select(`
         *,

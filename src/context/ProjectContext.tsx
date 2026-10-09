@@ -577,7 +577,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       ],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      dueDate: issueData.dueDate
+      dueDate: issueData.dueDate,
+      assignedAt: (issueData.assignee || (targetProject.defaultAssignee === 'lead' ? targetProject.lead : null)) 
+        ? new Date().toISOString() 
+        : undefined
     };
 
     // Try to create via API if Supabase is configured
@@ -661,10 +664,15 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       prev.map(issue => {
         if (issue.id !== id) return issue;
 
+        // Check if assignee is being set for the first time
+        const isFirstAssignment = updates.assignee && !issue.assignee;
+        
         const updated = {
           ...issue,
           ...updates,
-          updatedAt: new Date().toISOString()
+          updatedAt: new Date().toISOString(),
+          // Set assignedAt when assignee is first set
+          ...(isFirstAssignment ? { assignedAt: new Date().toISOString() } : {})
         };
 
         // If priority changed to blocker, trigger in-app notification

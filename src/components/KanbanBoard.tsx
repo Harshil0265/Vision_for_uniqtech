@@ -13,7 +13,8 @@ import {
   X,
   Layers,
   MessageSquare,
-  CheckSquare
+  CheckSquare,
+  Clock
 } from 'lucide-react';
 
 export const KanbanBoard: React.FC = () => {
@@ -136,6 +137,9 @@ export const KanbanBoard: React.FC = () => {
   const renderCard = (issue: Issue) => {
     const isBlocker = issue.priority === 'blocker';
     const subtaskCompleted = issue.subtasks.filter(st => st.completed).length;
+    
+    // Check if issue is overdue
+    const isOverdue = issue.dueDate && new Date(issue.dueDate) < new Date() && issue.status !== 'done';
 
     return (
       <div
@@ -144,7 +148,9 @@ export const KanbanBoard: React.FC = () => {
         onDragStart={e => handleDragStart(e, issue.id)}
         onClick={() => setSelectedIssue(issue)}
         className={`group p-3.5 rounded-xl bg-white hover:bg-slate-50/80 border transition-all duration-150 cursor-pointer shadow-2xs hover:shadow-xs ${
-          isBlocker
+          isOverdue
+            ? 'border-red-400 hover:border-red-500'
+            : isBlocker
             ? 'border-red-300 hover:border-red-400 bg-red-50/20'
             : 'border-slate-200/90 hover:border-blue-300'
         } ${draggedIssueId === issue.id ? 'opacity-40 scale-98' : ''} ${!canEdit ? 'cursor-default' : ''}`}
@@ -178,6 +184,23 @@ export const KanbanBoard: React.FC = () => {
             <span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded truncate max-w-full inline-flex items-center gap-1 font-medium">
               <Layers className="w-2.5 h-2.5 text-purple-600" />
               <span>{issue.epicTitle}</span>
+            </span>
+          </div>
+        )}
+
+        {/* Due Date Badge */}
+        {issue.dueDate && (
+          <div className="mb-2">
+            <span className={`text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 font-medium border ${
+              isOverdue 
+                ? 'text-red-700 bg-red-50 border-red-300' 
+                : 'text-blue-700 bg-blue-50 border-blue-200'
+            }`}>
+              <Clock className="w-2.5 h-2.5" />
+              <span>
+                {isOverdue ? 'OVERDUE: ' : 'Due: '}
+                {new Date(issue.dueDate).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+              </span>
             </span>
           </div>
         )}

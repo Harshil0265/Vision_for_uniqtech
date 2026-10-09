@@ -32,9 +32,26 @@ export const BacklogView: React.FC = () => {
   const [isNewSprintFormOpen, setIsNewSprintFormOpen] = useState(false);
   const [newSprintName, setNewSprintName] = useState('');
   const [newSprintGoal, setNewSprintGoal] = useState('');
+  const [sortBy, setSortBy] = useState<'default' | 'dueDate-asc' | 'dueDate-desc'>('default');
 
   const projectSprints = sprints.filter(s => s.projectId === activeProject.id);
   const projectIssues = issues.filter(i => i.projectId === activeProject.id);
+
+  // Sort issues by due date if selected
+  const sortIssues = (issuesToSort: Issue[]) => {
+    if (sortBy === 'default') return issuesToSort;
+    
+    return [...issuesToSort].sort((a, b) => {
+      const aDate = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+      const bDate = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+      
+      if (sortBy === 'dueDate-asc') {
+        return aDate - bDate;
+      } else {
+        return bDate - aDate;
+      }
+    });
+  };
 
   // Get user's role in the current project
   const userRole = getUserRoleInProject(activeProject, currentUser.id);
@@ -156,6 +173,17 @@ export const BacklogView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2.5">
+          {/* Due Date Sort Dropdown */}
+          <select
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value as any)}
+            className="bg-white border border-slate-200 text-slate-700 text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500 shadow-2xs font-medium cursor-pointer"
+          >
+            <option value="default">Default Sort</option>
+            <option value="dueDate-asc">Due Date ↑ (Earliest First)</option>
+            <option value="dueDate-desc">Due Date ↓ (Latest First)</option>
+          </select>
+
           {canManageSprints ? (
             <button
               onClick={() => setIsNewSprintFormOpen(!isNewSprintFormOpen)}
@@ -226,7 +254,7 @@ export const BacklogView: React.FC = () => {
       {/* Sprints Buckets */}
       <div className="space-y-6">
         {projectSprints.map(sprint => {
-          const sprintIssues = projectIssues.filter(i => i.sprintId === sprint.id);
+          const sprintIssues = sortIssues(projectIssues.filter(i => i.sprintId === sprint.id));
           const isCollapsed = collapsedSprints[sprint.id] || false;
           const totalPoints = sprintIssues.reduce((acc, curr) => acc + (curr.storyPoints || 0), 0);
           const completedPoints = sprintIssues
@@ -323,9 +351,9 @@ export const BacklogView: React.FC = () => {
 
         {/* Product Backlog Bucket for Active Project */}
         {(() => {
-          const backlogIssues = projectIssues.filter(
+          const backlogIssues = sortIssues(projectIssues.filter(
             i => i.sprintId === 'backlog' || i.sprintId === null || !i.sprintId
-          );
+          ));
           const isCollapsed = collapsedSprints['backlog'] || false;
           const totalPoints = backlogIssues.reduce((acc, curr) => acc + (curr.storyPoints || 0), 0);
 

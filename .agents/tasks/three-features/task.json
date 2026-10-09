@@ -1,0 +1,7 @@
+{
+  "task_id": "task-three-features",
+  "task_description": "Implement persistent project storage via Supabase, add due date & assignment date fields to issues, and enable file attachments on issues with Supabase Storage",
+  "status": "pending",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003"],
+  "blocked_reason": null
+}

@@ -1,0 +1,25 @@
+{
+  "project_type": "Vite + React SPA with Express backend, Supabase for persistence, Clerk for auth",
+  "language": "TypeScript",
+  "build_system": "Vite (frontend), tsx watch (backend), npm concurrently for dev server",
+  "test_framework": "No formal test framework detected. Verification via manual testing and `npm run lint` (tsc --noEmit)",
+  "build_command": "npm run build",
+  "test_command": "npm run lint",
+  "verification_instructions": "1. Run `npm run lint` to ensure TypeScript compilation succeeds. 2. Run `npm run dev` and test manually in the browser at http://localhost:5173. 3. Verify Supabase integration by checking network requests in DevTools and confirming data persists across page refreshes. 4. Test localStorage fallback by clearing VITE_SUPABASE_URL env var and restarting dev server.",
+  "snapshot_or_generated_files": "None detected. All build artifacts are in dist/ and ignored by git.",
+  "environment_constraints": "Supabase configured via VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (frontend), SUPABASE_URL, SUPABASE_SERVICE_KEY (backend). Clerk configured via VITE_CLERK_PUBLISHABLE_KEY (frontend), CLERK_SECRET_KEY (backend). Backend runs on port 3000, Vite dev server on port 5173 with proxy to /api. Do not restart the dev server unnecessarily - use tsx watch for hot reload.",
+  "contribution_requirements": "No AGENTS.md or CONTRIBUTING.md found. Follow existing code patterns and TypeScript strict mode conventions.",
+  "key_patterns": "1. ProjectContext.tsx uses isSupabaseConfigured flag to switch between Supabase API and localStorage fallback. 2. All Supabase writes happen via server.ts endpoints with Clerk auth. 3. localStorage keys are inconsistent: 'omniplane_projects' vs 'vision_projects' - needs standardization. 4. Issue types defined in src/types/index.ts. 5. All modals follow pattern: conditionally render based on state, stopPropagation on modal div, X button to close. 6. User role-based permissions checked via utils/permissions.ts helpers (getUserRoleInProject, canEditIssue, canDeleteProject). 7. Server endpoints follow pattern: flexAuth or requireAuth middleware, upsertClerkUser middleware, Supabase client operations, RLS policies enforced.",
+  "relevant_files": [
+    "h:\\vision for uniqtech\\src\\context\\ProjectContext.tsx",
+    "h:\\vision for uniqtech\\server.ts",
+    "h:\\vision for uniqtech\\src\\types\\index.ts",
+    "h:\\vision for uniqtech\\src\\components\\IssueDetailModal.tsx",
+    "h:\\vision for uniqtech\\src\\components\\CreateIssueModal.tsx",
+    "h:\\vision for uniqtech\\src\\components\\KanbanBoard.tsx",
+    "h:\\vision for uniqtech\\src\\components\\BacklogView.tsx",
+    "h:\\vision for uniqtech\\.agents\\tasks\\supabase-schema.sql",
+    "h:\\vision for uniqtech\\package.json"
+  ],
+  "directory_structure": "Root: package.json, server.ts, .env.local (env vars). src/: main React app (main.tsx, App.tsx). src/context/: ProjectContext.tsx (global state). src/components/: UI components (modals, board, backlog). src/types/: index.ts (TypeScript interfaces). src/lib/: utility modules. .agents/tasks/: task artifacts including Supabase schema SQL."
+}

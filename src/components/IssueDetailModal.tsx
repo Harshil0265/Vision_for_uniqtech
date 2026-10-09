@@ -606,6 +606,51 @@ export const IssueDetailModal: React.FC = () => {
               </select>
             </div>
 
+            {/* Due Date */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                Due Date & Time
+              </label>
+              {canEdit ? (
+                <input
+                  type="datetime-local"
+                  value={selectedIssue.dueDate ? new Date(selectedIssue.dueDate).toISOString().slice(0, 16) : ''}
+                  onChange={e => updateIssue(selectedIssue.id, { dueDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs font-mono"
+                />
+              ) : (
+                <div className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 shadow-2xs font-mono opacity-60">
+                  {selectedIssue.dueDate 
+                    ? new Date(selectedIssue.dueDate).toLocaleString([], { 
+                        year: 'numeric', 
+                        month: 'short', 
+                        day: 'numeric', 
+                        hour: '2-digit', 
+                        minute: '2-digit' 
+                      })
+                    : 'No due date set'}
+                </div>
+              )}
+            </div>
+
+            {/* Assigned At (Read-only) */}
+            {selectedIssue.assignedAt && (
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  Assigned At
+                </label>
+                <div className="w-full bg-slate-100 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-600 shadow-2xs font-mono">
+                  {new Date(selectedIssue.assignedAt).toLocaleString([], { 
+                    year: 'numeric', 
+                    month: 'short', 
+                    day: 'numeric', 
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Reporter */}
             <div className="space-y-1 pt-2 border-t border-slate-200 text-xs">
               <span className="text-[10px] text-slate-500 uppercase font-medium">Reporter:</span>

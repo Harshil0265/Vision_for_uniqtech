@@ -40,6 +40,7 @@ export const CreateIssueModal: React.FC = () => {
   const [sprintId, setSprintId] = useState<string>(activeSprint ? activeSprint.id : 'backlog');
   const [storyPoints, setStoryPoints] = useState<number>(3);
   const [status, setStatus] = useState<string>('todo');
+  const [dueDate, setDueDate] = useState<string>('');
 
   // When project changes, adjust default allowed types
   useEffect(() => {
@@ -67,7 +68,8 @@ export const CreateIssueModal: React.FC = () => {
       assignee: selectedAssignee,
       sprintId: sprintId === 'backlog' ? null : sprintId,
       storyPoints,
-      status
+      status,
+      dueDate: dueDate ? new Date(dueDate).toISOString() : undefined
     });
 
     setIsCreateModalOpen(false);
@@ -77,6 +79,7 @@ export const CreateIssueModal: React.FC = () => {
     setStoryPoints(3);
     setPriority('medium');
     setAssigneeId('unassigned');
+    setDueDate('');
   };
 
   const projectSprints = sprints.filter(s => s.projectId === selectedProjectId);
@@ -184,6 +187,19 @@ export const CreateIssueModal: React.FC = () => {
               value={description}
               onChange={e => setDescription(e.target.value)}
               className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
+            />
+          </div>
+
+          {/* Due Date */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+              Due Date & Time
+            </label>
+            <input
+              type="datetime-local"
+              value={dueDate}
+              onChange={e => setDueDate(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white"
             />
           </div>
 
