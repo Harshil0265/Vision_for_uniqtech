@@ -393,7 +393,117 @@ app.post('/api/projects', flexAuth, upsertClerkUser, async (req, res) => {
   }
 });
 
-// 2. GET /api/projects - Get user's accessible projects
+// 2. PUT /api/projects/:id - Update project
+app.put('/api/projects/:id', flexAuth, upsertClerkUser, async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ success: false, error: 'Supabase not configured' });
+  }
+
+  try {
+    const projectId = req.params.id;
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const resolvedEmail = (authReq as any).resolvedEmail;
+    
+    const supabaseUserId = resolvedEmail 
+      ? await getSupabaseUserIdByEmail(resolvedEmail)
+      : await getSupabaseUserId(clerkUserId, customUserId);
+    
+    if (!supabaseUserId) {
+      return res.status(400).json({ success: false, error: 'User not found in database' });
+    }
+
+    // Verify user is admin/owner
+    const isAdmin = await verifyProjectAdmin(projectId, supabaseUserId);
+    if (!isAdmin) {
+      return res.status(403).json({ success: false, error: 'Only admins and owners can update projects' });
+    }
+
+    const { name, key, description, template, allowedIssueTypes, defaultAssignee, iconGradient } = req.body;
+
+    // Build update object with only provided fields
+    const updateData: any = {};
+    if (name !== undefined) updateData.name = name;
+    if (key !== undefined) updateData.key = key;
+    if (description !== undefined) updateData.description = description;
+    if (template !== undefined) updateData.template = template;
+    if (allowedIssueTypes !== undefined) updateData.allowed_issue_types = allowedIssueTypes;
+    if (defaultAssignee !== undefined) updateData.default_assignee = defaultAssignee;
+    if (iconGradient !== undefined) updateData.icon_gradient = iconGradient;
+
+    // Update project
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      // @ts-ignore - Supabase generated types not available
+      .update(updateData)
+      .eq('id', projectId)
+      .select(`
+        *,
+        lead:users!projects_lead_user_id_fkey(id, name, email, avatar, role, department)
+      `)
+      .single();
+
+    if (projectError) {
+      console.error('[Supabase] Error updating project:', projectError);
+      return res.status(400).json({ success: false, error: projectError.message });
+    }
+
+    console.log(`[Project] Updated project ${projectId}`);
+    res.json({ success: true, project });
+  } catch (error) {
+    console.error('[API] Error updating project:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// 3. DELETE /api/projects/:id - Delete project
+app.delete('/api/projects/:id', flexAuth, upsertClerkUser, async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ success: false, error: 'Supabase not configured' });
+  }
+
+  try {
+    const projectId = req.params.id;
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const resolvedEmail = (authReq as any).resolvedEmail;
+    
+    const supabaseUserId = resolvedEmail 
+      ? await getSupabaseUserIdByEmail(resolvedEmail)
+      : await getSupabaseUserId(clerkUserId, customUserId);
+    
+    if (!supabaseUserId) {
+      return res.status(400).json({ success: false, error: 'User not found in database' });
+    }
+
+    // Verify user is admin/owner
+    const isAdmin = await verifyProjectAdmin(projectId, supabaseUserId);
+    if (!isAdmin) {
+      return res.status(403).json({ success: false, error: 'Only admins and owners can delete projects' });
+    }
+
+    // Delete project (cascade deletes via foreign keys)
+    const { error: deleteError } = await supabase
+      .from('projects')
+      .delete()
+      .eq('id', projectId);
+
+    if (deleteError) {
+      console.error('[Supabase] Error deleting project:', deleteError);
+      return res.status(400).json({ success: false, error: deleteError.message });
+    }
+
+    console.log(`[Project] Deleted project ${projectId}`);
+    res.json({ success: true, message: 'Project deleted successfully' });
+  } catch (error) {
+    console.error('[API] Error deleting project:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// 4. GET /api/projects - Get user's accessible projects
 app.get('/api/projects', requireAuth(), upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
@@ -464,7 +574,7 @@ app.get('/api/projects', requireAuth(), upsertClerkUser, async (req, res) => {
   }
 });
 
-// 3. POST /api/projects/:id/invite - Invite user to project
+// 5. POST /api/projects/:id/invite - Invite user to project
 app.post('/api/projects/:id/invite', flexAuth, upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
@@ -703,7 +813,7 @@ app.post('/api/projects/:id/invite', flexAuth, upsertClerkUser, async (req, res)
   }
 });
 
-// 4. GET /api/projects/:id/members - Get project members
+// 6. GET /api/projects/:id/members - Get project members
 app.get('/api/projects/:id/members', requireAuth(), upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
@@ -747,7 +857,7 @@ app.get('/api/projects/:id/members', requireAuth(), upsertClerkUser, async (req,
   }
 });
 
-// 5. DELETE /api/projects/:id/members/:userId - Remove member from project
+// 7. DELETE /api/projects/:id/members/:userId - Remove member from project
 app.delete('/api/projects/:id/members/:userId', flexAuth, upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
@@ -813,7 +923,7 @@ app.delete('/api/projects/:id/members/:userId', flexAuth, upsertClerkUser, async
   }
 });
 
-// 6. PATCH /api/projects/:id/members/:userId/role - Update member role
+// 8. PATCH /api/projects/:id/members/:userId/role - Update member role
 app.patch('/api/projects/:id/members/:userId/role', flexAuth, upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
@@ -871,7 +981,7 @@ app.patch('/api/projects/:id/members/:userId/role', flexAuth, upsertClerkUser, a
   }
 });
 
-// 7. GET /api/projects/:id/issues - Get project issues
+// 9. GET /api/projects/:id/issues - Get project issues
 app.get('/api/projects/:id/issues', requireAuth(), upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
@@ -916,7 +1026,7 @@ app.get('/api/projects/:id/issues', requireAuth(), upsertClerkUser, async (req, 
   }
 });
 
-// 8. POST /api/projects/:id/issues - Create issue
+// 10. POST /api/projects/:id/issues - Create issue
 app.post('/api/projects/:id/issues', requireAuth(), upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
@@ -1018,7 +1128,7 @@ app.post('/api/projects/:id/issues', requireAuth(), upsertClerkUser, async (req,
   }
 });
 
-// 9. PATCH /api/issues/:issueId - Update issue
+// 11. PATCH /api/issues/:issueId - Update issue
 app.patch('/api/issues/:issueId', requireAuth(), upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
@@ -1083,7 +1193,7 @@ app.patch('/api/issues/:issueId', requireAuth(), upsertClerkUser, async (req, re
   }
 });
 
-// 10. DELETE /api/issues/:issueId - Delete issue
+// 12. DELETE /api/issues/:issueId - Delete issue
 app.delete('/api/issues/:issueId', requireAuth(), upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
@@ -1135,7 +1245,7 @@ app.delete('/api/issues/:issueId', requireAuth(), upsertClerkUser, async (req, r
   }
 });
 
-// 11. GET /api/projects/:id/sprints - Get project sprints
+// 13. GET /api/projects/:id/sprints - Get project sprints
 app.get('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
@@ -1176,7 +1286,7 @@ app.get('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req,
   }
 });
 
-// 12. POST /api/projects/:id/sprints - Create sprint
+// 14. POST /api/projects/:id/sprints - Create sprint
 app.post('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });
@@ -1229,7 +1339,7 @@ app.post('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req
   }
 });
 
-// 13. POST /api/projects/:id/issues/:issueId/comments - Add comment to issue
+// 15. POST /api/projects/:id/issues/:issueId/comments - Add comment to issue
 app.post('/api/projects/:id/issues/:issueId/comments', requireAuth(), upsertClerkUser, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ success: false, error: 'Supabase not configured' });

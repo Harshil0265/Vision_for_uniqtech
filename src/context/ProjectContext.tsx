@@ -72,8 +72,8 @@ interface ProjectContextType {
 
   // Actions
   createProject: (data: Partial<Project>) => Promise<Project>;
-  updateProject: (id: string, updates: Partial<Project>) => void;
-  deleteProject: (id: string) => void;
+  updateProject: (id: string, updates: Partial<Project>) => Promise<void>;
+  deleteProject: (id: string) => Promise<void>;
   createIssue: (issue: Partial<Issue>) => Promise<Issue>;
   updateIssue: (id: string, updates: Partial<Issue>) => void;
   deleteIssue: (id: string) => void;
@@ -113,7 +113,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   // Projects
   const [projects, setProjects] = useState<Project[]>(() => {
-    const saved = localStorage.getItem('omniplane_projects');
+    const saved = localStorage.getItem('vision_projects');
     if (saved) {
       return JSON.parse(saved);
     }
@@ -123,7 +123,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   });
 
   const [activeProject, setActiveProject] = useState<Project>(() => {
-    const saved = localStorage.getItem('omniplane_active_project_id');
+    const saved = localStorage.getItem('vision_active_project_id');
     if (saved) {
       const found = projects.find(p => p.id === saved);
       if (found) return found;
@@ -134,17 +134,17 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   // Load saved state or default
   const [issues, setIssues] = useState<Issue[]>(() => {
-    const saved = localStorage.getItem('omniplane_issues');
+    const saved = localStorage.getItem('vision_issues');
     return saved ? JSON.parse(saved) : [];
   });
 
   const [columns, setColumns] = useState<KanbanColumn[]>(() => {
-    const saved = localStorage.getItem('omniplane_columns');
+    const saved = localStorage.getItem('vision_columns');
     return saved ? JSON.parse(saved) : INITIAL_COLUMNS;
   });
 
   const [sprints, setSprints] = useState<Sprint[]>(() => {
-    const saved = localStorage.getItem('omniplane_sprints');
+    const saved = localStorage.getItem('vision_sprints');
     return saved ? JSON.parse(saved) : [];
   });
 
@@ -447,7 +447,43 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     return newProject;
   };
 
-  const updateProject = (id: string, updates: Partial<Project>) => {
+  const updateProject = async (id: string, updates: Partial<Project>) => {
+    // Try to update via API if Supabase is configured
+    if (isSupabaseConfigured && clerkSession?.token) {
+      try {
+        const response = await fetch(`/api/projects/${id}`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${clerkSession.token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(updates)
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          const updatedProject = result.project;
+          
+          setProjects(prev =>
+            prev.map(p => {
+              if (p.id !== id) return p;
+              if (activeProject.id === id) {
+                setActiveProject(updatedProject);
+              }
+              return updatedProject;
+            })
+          );
+          
+          return;
+        } else {
+          console.warn('[ProjectContext] Failed to update project via API, using localStorage fallback');
+        }
+      } catch (error) {
+        console.warn('[ProjectContext] Error updating project, using localStorage fallback:', error);
+      }
+    }
+
+    // Fallback to localStorage
     setProjects(prev =>
       prev.map(p => {
         if (p.id !== id) return p;
@@ -460,11 +496,43 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     );
   };
 
-  const deleteProject = (id: string) => {
+  const deleteProject = async (id: string) => {
     if (projects.length <= 1) {
       alert('Cannot delete the only remaining project in workspace.');
       return;
     }
+
+    // Try to delete via API if Supabase is configured
+    if (isSupabaseConfigured && clerkSession?.token) {
+      try {
+        const response = await fetch(`/api/projects/${id}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${clerkSession.token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.ok) {
+          const remaining = projects.filter(p => p.id !== id);
+          setProjects(remaining);
+          if (activeProject.id === id) {
+            setActiveProject(remaining[0]);
+          }
+          // Delete issues & sprints belonging to this project
+          setIssues(prev => prev.filter(i => i.projectId !== id));
+          setSprints(prev => prev.filter(s => s.projectId !== id));
+          
+          return;
+        } else {
+          console.warn('[ProjectContext] Failed to delete project via API, using localStorage fallback');
+        }
+      } catch (error) {
+        console.warn('[ProjectContext] Error deleting project, using localStorage fallback:', error);
+      }
+    }
+
+    // Fallback to localStorage
     const remaining = projects.filter(p => p.id !== id);
     setProjects(remaining);
     if (activeProject.id === id) {

@@ -1,0 +1,34 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Fix localStorage key inconsistency (standardize on 'vision_projects') and implement full Supabase persistence for projects. Projects must load from /api/projects on init when Supabase is configured, save to Supabase on createProject/updateProject/deleteProject, and fall back gracefully to localStorage when Supabase is unavailable. Server endpoints GET /api/projects, POST /api/projects, DELETE /api/projects/:id are already implemented. This feature adds PUT /api/projects/:id and wires ProjectContext to use the API.",
+  "status": "completed",
+  "steps": [
+    "1. Fix localStorage key inconsistency in ProjectContext.tsx: search for 'omniplane_projects' and replace with 'vision_projects' (lines 60, 160). Also fix 'omniplane_active_project_id' to 'vision_active_project_id'.",
+    "2. Add PUT /api/projects/:id endpoint in server.ts after the POST /api/projects endpoint (around line 560). Accept { name, key, description, template, allowedIssueTypes, defaultAssignee, iconGradient } in req.body. Verify user is owner via verifyProjectAdmin. Update the projects table. Return updated project with lead user joined.",
+    "3. Add DELETE /api/projects/:id endpoint in server.ts after PUT. Verify user is owner. Delete from projects table (cascade deletes issues, sprints, etc. via foreign keys). Return success.",
+    "4. Modify ProjectContext.tsx updateProject function (around line 470): when isSupabaseConfigured and clerkSession, call PUT /api/projects/:id with updates. On success, update local state. On error, log warning and fall back to localStorage-only update.",
+    "5. Modify ProjectContext.tsx deleteProject function (around line 480): when isSupabaseConfigured and clerkSession, call DELETE /api/projects/:id. On success, update local state. On error, log warning and fall back to localStorage-only delete.",
+    "6. Test end-to-end: start dev server with Supabase configured, create a project, verify it appears in Supabase projects table, refresh browser, verify project loads from API. Update project name, verify PUT request. Delete project, verify DELETE request and cascade. Clear Supabase env vars, restart dev, create project, verify localStorage fallback works."
+  ],
+  "acceptance_criteria": [
+    "All localStorage keys use 'vision_' prefix consistently (no 'omniplane_' keys remain)",
+    "ProjectContext loads projects from /api/projects on mount when Supabase is configured",
+    "createProject persists to Supabase first, then localStorage as cache",
+    "updateProject and deleteProject mirror changes to Supabase when configured",
+    "Projects survive browser refresh when Supabase is configured",
+    "localStorage fallback works when Supabase is not configured (no crashes)",
+    "npm run lint passes with no TypeScript errors"
+  ],
+  "verification": [
+    "Run `npm run lint` and confirm zero errors",
+    "Run `npm run dev` and open http://localhost:5173",
+    "Create a new project, open DevTools Network tab, confirm POST /api/projects succeeds",
+    "Refresh the page, confirm GET /api/projects loads the project",
+    "Edit the project name, confirm PUT /api/projects/:id succeeds",
+    "Delete the project (if allowed), confirm DELETE /api/projects/:id succeeds",
+    "Stop dev server, clear VITE_SUPABASE_URL env var, restart, create project, confirm no API calls and localStorage works"
+  ],
+  "blocked_reason": null,
+  "findings": "Implementation completed successfully. All localStorage keys standardized to 'vision_' prefix. PUT /api/projects/:id and DELETE /api/projects/:id endpoints added to server.ts with proper authentication and authorization checks. ProjectContext.tsx updated to call these endpoints when Supabase is configured, with graceful fallback to localStorage. TypeScript compilation passes with zero errors. Build succeeds. Note: Manual browser testing required to verify end-to-end functionality as specified in verification steps 2-7."
+}
