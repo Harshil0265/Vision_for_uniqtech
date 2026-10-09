@@ -53,14 +53,20 @@ Your `.env` file is already configured with:
 ## 4️⃣ Run the Application
 
 ```bash
-# Development mode
+# Development mode (runs both frontend and backend)
 npm run dev
+
+# This will start:
+# - Frontend (Vite) on http://localhost:5173
+# - Backend (Express API) on http://localhost:3000
 
 # Production build
 npm run build
 ```
 
 Open: `http://localhost:5173`
+
+**Note:** The `npm run dev` command uses `concurrently` to run both servers simultaneously. You'll see output from both servers with color-coded prefixes (VITE in cyan, API in magenta).
 
 ---
 
@@ -183,25 +189,37 @@ Happy project managing! 🚀
 
 ## Running the Development Environment
 
-This project requires TWO servers running simultaneously:
+This project runs both frontend and backend servers with a **single command**:
 
-### Terminal 1 — Backend API (Express on port 3000)
-```
-npm run dev:server
+```bash
+npm run dev
 ```
 
-### Terminal 2 — Frontend (Vite on port 5173)
-```
-npm run dev:frontend
-```
+This will automatically start:
+- **Backend API** (Express) on port 3000
+- **Frontend** (Vite) on port 5173
 
 Open http://localhost:5173 in your browser.
 
-> **Why two terminals?** Vite proxies all `/api/*` requests to `http://localhost:3000`. If the backend is not running, any API call (inviting members, creating projects, etc.) will fail with a network error.
+> **Behind the scenes:** The `npm run dev` command uses `concurrently` to run both servers simultaneously. You'll see output from both with color-coded prefixes (VITE in cyan, API in magenta). Vite proxies all `/api/*` requests to `http://localhost:3000`.
+
+### Alternative: Run Servers Separately
+
+If you prefer to run servers in separate terminals:
+
+**Terminal 1 — Backend API:**
+```bash
+npm run dev:server
+```
+
+**Terminal 2 — Frontend:**
+```bash
+npm run dev:frontend
+```
 
 ### Inviting Members
 
-For invitations to work you also need:
-1. Both servers running (see above)
+For invitations to work you need:
+1. Both servers running (`npm run dev` handles this automatically)
 2. A valid Supabase project with the schema applied (see Supabase Setup section)
-3. The `.env` file populated with your Supabase URL and anon key
+3. The `.env` file populated with your Supabase URL and keys
