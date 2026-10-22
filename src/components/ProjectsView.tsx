@@ -23,6 +23,7 @@ import {
 export const ProjectsView: React.FC = () => {
   const {
     projects,
+    isLoadingProjects,
     activeProject,
     setActiveProject,
     issues,
@@ -36,7 +37,12 @@ export const ProjectsView: React.FC = () => {
   const [projectSearch, setProjectSearch] = useState('');
   const [inviteModalProject, setInviteModalProject] = useState<Project | null>(null);
 
-  const filteredProjects = projects.filter(p => {
+  // Additional safeguard: only show projects where current user is a member
+  const userProjects = projects.filter(p => 
+    p.members?.some(m => m.userId === currentUser.id)
+  );
+
+  const filteredProjects = userProjects.filter(p => {
     if (!projectSearch.trim()) return true;
     const q = projectSearch.toLowerCase();
     return p.name.toLowerCase().includes(q) || p.key.toLowerCase().includes(q) || p.description.toLowerCase().includes(q);
@@ -89,8 +95,44 @@ export const ProjectsView: React.FC = () => {
         </div>
       </div>
 
+      {/* Loading State */}
+      {isLoadingProjects && (
+        <div className="flex items-center justify-center py-20">
+          <div className="text-center">
+            <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div>
+            <p className="text-sm text-slate-600">Loading your projects...</p>
+          </div>
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!isLoadingProjects && filteredProjects.length === 0 && (
+        <div className="flex items-center justify-center py-20">
+          <div className="text-center max-w-md">
+            <FolderKanban className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-slate-900 mb-2">No projects yet</h3>
+            <p className="text-sm text-slate-500 mb-6">
+              {projects.length === 0 
+                ? "Create your first project to get started with Vision project management."
+                : "No projects match your search criteria."
+              }
+            </p>
+            {projects.length === 0 && (
+              <button
+                onClick={() => setIsCreateProjectModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-sm font-semibold shadow-xs transition-all mx-auto cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Create Your First Project</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Projects Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+      {!isLoadingProjects && filteredProjects.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredProjects.map(proj => {
           const isActive = activeProject.id === proj.id;
           const projIssues = issues.filter(i => i.projectId === proj.id);
@@ -240,6 +282,7 @@ export const ProjectsView: React.FC = () => {
           );
         })}
       </div>
+      )}
 
       {/* Invite Member Modal */}
       <InviteMemberModal

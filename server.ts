@@ -324,6 +324,47 @@ async function verifyProjectAdmin(projectId: string, userId: string): Promise<bo
   return (data as any)?.role === 'owner' || (data as any)?.role === 'admin';
 }
 
+// Enhanced helper function to verify user has access to project with role check
+async function verifyProjectAccessEnhanced(
+  projectId: string, 
+  userId: string, 
+  requiredRole?: 'owner' | 'admin' | 'member'
+): Promise<{ hasAccess: boolean; role?: string; error?: string }> {
+  if (!supabase) {
+    return { hasAccess: false, error: 'Database not configured' };
+  }
+  
+  const { data, error } = await supabase
+    .from('project_members')
+    .select('role')
+    .eq('project_id', projectId)
+    .eq('user_id', userId)
+    .single();
+  
+  if (error || !data) {
+    return { hasAccess: false, error: 'Access denied to this project' };
+  }
+  
+  const userRole = (data as any).role;
+  
+  // Check required role
+  if (requiredRole) {
+    const roleHierarchy: Record<string, number> = { viewer: 0, member: 1, admin: 2, owner: 3 };
+    const userRoleLevel = roleHierarchy[userRole as string] || 0;
+    const requiredRoleLevel = roleHierarchy[requiredRole] || 0;
+    
+    if (userRoleLevel < requiredRoleLevel) {
+      return { 
+        hasAccess: false, 
+        role: userRole,
+        error: `Requires ${requiredRole} role or higher` 
+      };
+    }
+  }
+  
+  return { hasAccess: true, role: userRole };
+}
+
 // 1. POST /api/projects - Create new project
 app.post('/api/projects', flexAuth, upsertClerkUser, async (req, res) => {
   if (!supabase) {
@@ -608,6 +649,66 @@ app.get('/api/projects', requireAuth(), upsertClerkUser, async (req, res) => {
     res.json({ success: true, projects: projectsWithMembers });
   } catch (error) {
     console.error('[API] Error fetching projects:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// 4.1 GET /api/projects/:id - Get single project details (with access control)
+app.get('/api/projects/:id', requireAuth(), upsertClerkUser, async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ success: false, error: 'Supabase not configured' });
+  }
+
+  try {
+    const projectId = req.params.id;
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
+    
+    if (!supabaseUserId) {
+      return res.status(403).json({ success: false, error: 'Access denied to this project' });
+    }
+
+    // Verify user has access to this project
+    const hasAccess = await verifyProjectAccess(projectId, supabaseUserId);
+    if (!hasAccess) {
+      return res.status(403).json({ success: false, error: 'Access denied to this project' });
+    }
+
+    // Get project details with lead user info
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .select(`
+        *,
+        lead:users!projects_lead_user_id_fkey(id, name, email, avatar, role, department)
+      `)
+      .eq('id', projectId)
+      .single();
+
+    if (projectError || !project) {
+      console.error('[Supabase] Error fetching project:', projectError);
+      return res.status(404).json({ success: false, error: 'Project not found' });
+    }
+
+    // Get members for this project
+    const { data: members } = await supabase
+      .from('project_members')
+      .select(`
+        role,
+        invited_at,
+        user:users!project_members_user_id_fkey(id, name, email, avatar, role, department)
+      `)
+      .eq('project_id', projectId);
+
+    const projectWithMembers = {
+      ...(project as any),
+      members: members || []
+    };
+
+    res.json({ success: true, project: projectWithMembers });
+  } catch (error) {
+    console.error('[API] Error fetching project:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
@@ -1285,7 +1386,225 @@ app.delete('/api/issues/:issueId', requireAuth(), upsertClerkUser, async (req, r
   }
 });
 
-// 13. POST /api/projects/:projectId/issues/:issueId/attachments - Upload attachment
+// Sprint Management Endpoints
+
+// 13. GET /api/projects/:id/sprints - Get sprints for a project
+app.get('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ success: false, error: 'Supabase not configured' });
+  }
+
+  try {
+    const projectId = req.params.id;
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
+    
+    if (!supabaseUserId) {
+      return res.status(400).json({ success: false, error: 'User not found' });
+    }
+
+    // Verify user has access to project
+    const hasAccess = await verifyProjectAccess(projectId, supabaseUserId);
+    if (!hasAccess) {
+      return res.status(403).json({ success: false, error: 'Access denied to this project' });
+    }
+
+    // Get sprints for this project
+    const { data: sprints, error } = await supabase
+      .from('sprints')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('[Supabase] Error fetching sprints:', error);
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    
+    res.json({ success: true, sprints: sprints || [] });
+  } catch (error) {
+    console.error('[API] Error fetching sprints:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// 14. POST /api/projects/:id/sprints - Create sprint
+app.post('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ success: false, error: 'Supabase not configured' });
+  }
+
+  try {
+    const projectId = req.params.id;
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
+    
+    if (!supabaseUserId) {
+      return res.status(400).json({ success: false, error: 'User not found' });
+    }
+
+    // Verify user has member role or higher
+    const accessResult = await verifyProjectAccessEnhanced(projectId, supabaseUserId, 'member');
+    if (!accessResult.hasAccess) {
+      return res.status(403).json({ success: false, error: accessResult.error || 'Access denied' });
+    }
+
+    const { name, goal, startDate, endDate, status = 'planned' } = req.body;
+
+    // Create sprint
+    const { data: sprint, error } = await supabase
+      .from('sprints')
+      .insert({
+        project_id: projectId,
+        name,
+        goal,
+        start_date: startDate,
+        end_date: endDate,
+        status,
+        planned_points: 0,
+        completed_points: 0
+      } as any)
+      .select()
+      .single();
+    
+    if (error) {
+      console.error('[Supabase] Error creating sprint:', error);
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    
+    res.status(201).json({ success: true, sprint });
+  } catch (error) {
+    console.error('[API] Error creating sprint:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// 15. PATCH /api/sprints/:id - Update sprint
+app.patch('/api/sprints/:id', requireAuth(), upsertClerkUser, async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ success: false, error: 'Supabase not configured' });
+  }
+
+  try {
+    const sprintId = req.params.id;
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
+    
+    if (!supabaseUserId) {
+      return res.status(400).json({ success: false, error: 'User not found' });
+    }
+
+    // Get sprint to find project_id
+    const { data: sprint, error: sprintError } = await supabase
+      .from('sprints')
+      .select('project_id')
+      .eq('id', sprintId)
+      .single();
+    
+    if (sprintError || !sprint) {
+      return res.status(404).json({ success: false, error: 'Sprint not found' });
+    }
+
+    // Verify user has member role or higher in project
+    const accessResult = await verifyProjectAccessEnhanced((sprint as any).project_id, supabaseUserId, 'member');
+    if (!accessResult.hasAccess) {
+      return res.status(403).json({ success: false, error: accessResult.error || 'Access denied' });
+    }
+
+    const { name, goal, startDate, endDate, status, plannedPoints, completedPoints } = req.body;
+
+    // Build update object
+    const updateData: any = {};
+    if (name !== undefined) updateData.name = name;
+    if (goal !== undefined) updateData.goal = goal;
+    if (startDate !== undefined) updateData.start_date = startDate;
+    if (endDate !== undefined) updateData.end_date = endDate;
+    if (status !== undefined) updateData.status = status;
+    if (plannedPoints !== undefined) updateData.planned_points = plannedPoints;
+    if (completedPoints !== undefined) updateData.completed_points = completedPoints;
+
+    // Update sprint
+    const { data: updatedSprint, error: updateError } = await supabase
+      .from('sprints')
+      // @ts-ignore - Supabase generated types not available
+      .update(updateData)
+      .eq('id', sprintId)
+      .select()
+      .single();
+    
+    if (updateError) {
+      console.error('[Supabase] Error updating sprint:', updateError);
+      return res.status(400).json({ success: false, error: updateError.message });
+    }
+    
+    res.json({ success: true, sprint: updatedSprint });
+  } catch (error) {
+    console.error('[API] Error updating sprint:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// 16. DELETE /api/sprints/:id - Delete sprint
+app.delete('/api/sprints/:id', requireAuth(), upsertClerkUser, async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ success: false, error: 'Supabase not configured' });
+  }
+
+  try {
+    const sprintId = req.params.id;
+    const authReq = req as AuthRequest;
+    const clerkUserId = authReq.auth?.userId;
+    const customUserId = authReq.customUserId;
+    const supabaseUserId = await getSupabaseUserId(clerkUserId, customUserId);
+    
+    if (!supabaseUserId) {
+      return res.status(400).json({ success: false, error: 'User not found' });
+    }
+
+    // Get sprint to find project_id
+    const { data: sprint, error: sprintError } = await supabase
+      .from('sprints')
+      .select('project_id')
+      .eq('id', sprintId)
+      .single();
+    
+    if (sprintError || !sprint) {
+      return res.status(404).json({ success: false, error: 'Sprint not found' });
+    }
+
+    // Verify user is admin/owner in project
+    const isAdmin = await verifyProjectAdmin((sprint as any).project_id, supabaseUserId);
+    if (!isAdmin) {
+      return res.status(403).json({ success: false, error: 'Only admins and owners can delete sprints' });
+    }
+
+    // Delete sprint
+    const { error: deleteError } = await supabase
+      .from('sprints')
+      .delete()
+      .eq('id', sprintId);
+    
+    if (deleteError) {
+      console.error('[Supabase] Error deleting sprint:', deleteError);
+      return res.status(400).json({ success: false, error: deleteError.message });
+    }
+    
+    res.json({ success: true, message: 'Sprint deleted successfully' });
+  } catch (error) {
+    console.error('[API] Error deleting sprint:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// Attachment Management Endpoints
+
+// 17. POST /api/projects/:projectId/issues/:issueId/attachments - Upload attachment
 app.post('/api/projects/:projectId/issues/:issueId/attachments', 
   requireAuth(), 
   upsertClerkUser, 

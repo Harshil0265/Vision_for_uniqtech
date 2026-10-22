@@ -51,13 +51,11 @@ export const KanbanBoard: React.FC = () => {
   const userRole = getUserRoleInProject(activeProject, currentUser.id);
   const canEdit = userRole ? canEditIssue(userRole) : false;
 
-  // Apply active project, active sprint & quick filters
-  const filteredIssues = issues.filter(issue => {
-    // Project filter
-    if (issue.projectId && issue.projectId !== activeProject.id) {
-      return false;
-    }
+  // Safeguard: Only show issues from the active project
+  const projectIssues = issues.filter(i => i.projectId === activeProject.id);
 
+  // Apply active project, active sprint & quick filters
+  const filteredIssues = projectIssues.filter(issue => {
     // Only issues in active sprint or backlog if no active sprint
     if (activeSprint) {
       if (issue.sprintId !== activeSprint.id) return false;

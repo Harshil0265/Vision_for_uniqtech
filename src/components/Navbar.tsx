@@ -19,6 +19,7 @@ import {
 export const Navbar: React.FC = () => {
   const {
     projects,
+    isLoadingProjects,
     activeProject,
     setActiveProject,
     currentUser,
@@ -113,7 +114,16 @@ export const Navbar: React.FC = () => {
               </div>
 
               <div className="max-h-64 overflow-y-auto p-1.5 space-y-1">
-                {projects.map(p => {
+                {isLoadingProjects ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="text-xs text-slate-500">Loading projects...</div>
+                  </div>
+                ) : projects.length === 0 ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="text-xs text-slate-500">No projects available</div>
+                  </div>
+                ) : (
+                  projects.map(p => {
                   const isCurrent = p.id === activeProject.id;
                   const count = issues.filter(i => i.projectId === p.id).length;
                   return (
@@ -143,7 +153,8 @@ export const Navbar: React.FC = () => {
                       {isCurrent && <Check className="w-4 h-4 text-blue-600 shrink-0" />}
                     </button>
                   );
-                })}
+                })
+                )}
               </div>
 
               <div className="p-2 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-[11px]">

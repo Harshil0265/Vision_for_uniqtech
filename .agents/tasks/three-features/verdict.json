@@ -1,0 +1,4 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "summary": "Missing useEffect import causes runtime error in IssueDetailModal. localStorage fallback for attachments not implemented despite acceptance criteria requirement. Incomplete localStorage key migration leaves omniplane_ fallbacks. assignedAt timestamp logic has asymmetry between create and update paths. File type validation mismatch between client and server."
+}

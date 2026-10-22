@@ -1,298 +1,569 @@
-# Implementation Plan: Project-Level Access Control & User Invitation System
+# Implementation Plan: Complete Project-Based Access Control with Backend API Integration
 
-## Overview
-Implement a complete project-level access control system for the Vision project management app by adding Supabase backend while maintaining Clerk authentication and graceful localStorage fallback for development.
+## Task Overview
 
-## Architecture Decisions
+**Objective**: Implement comprehensive project-based access control so users only see projects they are members of, with proper filtering of issues, sprints, and all related data. Backend must enforce access control on all endpoints.
 
-### Database Choice: Supabase PostgreSQL
-- **Rationale**: Supabase provides PostgreSQL with built-in Row Level Security (RLS), real-time subscriptions, and REST API generation. Perfect for multi-tenant project access control where users should only see their own projects.
-- **Integration**: @supabase/supabase-js client library, no migration from Clerk (Clerk stays for auth, Supabase for data).
+**Current State Analysis**:
+- ✅ Backend has proper access control on most endpoints (project CRUD, issues, members)
+- ✅ RLS policies exist in Supabase schema
+- ✅ GET /api/projects already filters by user membership (line 545 in server.ts)
+- ❌ ProjectContext.tsx loads ALL demo projects without filtering (line 217)
+- ❌ fetchUserProjects runs only on mount, doesn't react to login/logout (line 232)
+- ❌ Mixed localStorage and API data causing inconsistency
+- ❌ Issues and sprints not filtered by accessible projects
+- ❌ Some backend endpoints lack complete project access verification
 
-### Access Control Model: Role-Based (RBAC)
-- **Roles**: Owner (creator, full control) → Admin (manage team) → Member (create/edit content) → Viewer (read-only)
-- **Enforcement**: Backend via RLS policies (database-level), frontend via permission utility functions (UI-level).
-- **Storage**: project_members join table with role column.
-
-### Fallback Strategy
-- **When**: VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY missing from environment.
-- **Behavior**: ProjectContext checks `isSupabaseConfigured` flag. If false, falls back to localStorage + mockData loading. All features work in degraded mode for local development.
-- **Implementation**: Wrap all API calls in try-catch, on error revert to localStorage operations.
-
----
-
-## Feature Breakdown (FEAT-001 through FEAT-004)
-
-This plan has been decomposed into 4 features for sequential implementation. See individual FEAT-NNN.json files in .agents/tasks/task-access-control/features/ for detailed steps.
-
-### FEAT-001: Supabase Integration & Database Schema
-**Files**: 
-- src/lib/supabase.ts (new)
-- .agents/tasks/supabase-schema.sql (new)
-- .agents/tasks/setup-instructions.md (new)
-- .env.example (modify)
-- package.json (add dependency)
-
-**What**: Install Supabase client, define complete database schema with users, projects, project_members, issues, sprints, comments tables. Implement Row Level Security policies. Create migration SQL and setup docs.
-
-**Verification**: `npm run build` succeeds, supabase-schema.sql is syntactically valid.
+**Architecture**:
+- Frontend: React + TypeScript, Context API for state management
+- Backend: Express with Clerk authentication
+- Database: Supabase with RLS policies
+- Build: Vite (frontend) + tsx watch (backend)
+- Test: TypeScript type checking with `npm run lint`
 
 ---
 
-### FEAT-002: Backend API Endpoints
+## Implementation Plan
+
+### FEAT-001: Fix ProjectContext.tsx - Remove Global Project Loading & Add User Session Dependency
+
+**Priority**: Critical - This is the root cause of users seeing all projects
+
 **Files**:
-- server.ts (extensive modifications)
+- `h:\vision for uniqtech\src\context\ProjectContext.tsx` (lines 130-175, 232-270)
 
-**What**: Implement 15+ REST endpoints for project CRUD, member invitations, issue/sprint/comment operations. Integrate Supabase client in server.ts using SUPABASE_SERVICE_KEY for admin operations. Use existing @clerk/express requireAuth middleware to verify JWT. Auto-upsert Clerk users into Supabase users table on first auth.
+**Changes Required**:
 
-**Endpoints**:
-- POST /api/projects (create + auto-add creator as owner)
-- GET /api/projects (user's accessible projects only)
-- POST /api/projects/:id/invite (email + role)
-- GET /api/projects/:id/members
-- DELETE /api/projects/:id/members/:userId
-- PATCH /api/projects/:id/members/:userId (change role)
-- GET /api/projects/:id/issues
-- POST /api/projects/:id/issues
-- PATCH /api/issues/:issueId
-- DELETE /api/issues/:issueId
-- GET /api/projects/:id/sprints
-- POST /api/projects/:id/sprints
-- POST /api/projects/:id/issues/:issueId/comments
+1. **Remove Initial Demo Project Loading** (lines 150-175)
+   - Current behavior: Loads INITIAL_PROJECTS without filtering when localStorage is empty
+   - New behavior: Start with empty array in localStorage mode, let useEffect handle demo data
+   - Keep the check for `isSupabaseConfigured` but remove the `INITIAL_PROJECTS` assignment
 
-**Verification**: `npm run build`, start dev server, test endpoints via curl/Postman with Clerk token.
+2. **Add User Session Dependency to fetchUserProjects** (line 232)
+   - Current: `useEffect(() => { fetchUserProjects(); }, [isSupabaseConfigured]);`
+   - New: `useEffect(() => { fetchUserProjects(); }, [isSupabaseConfigured, clerkSession?.token]);`
+   - This ensures projects refetch when user logs in/out
+
+3. **Fix Demo Projects Filter** (lines 217-270)
+   - Current: Loads all INITIAL_PROJECTS without checking user membership
+   - New: Filter `INITIAL_PROJECTS` by `currentUser.id` in project members
+   - Update condition: Only load filtered demo data when NOT in Supabase mode AND no saved projects
+
+4. **Clear Projects on Logout**
+   - Add check in `clerkSignOut` function (around line 850) to clear projects: `setProjects([])`
+   - Clear activeProject to first project or placeholder
+
+5. **Add Loading State**
+   - Add `const [isLoadingProjects, setIsLoadingProjects] = useState(false);`
+   - Set to true when fetching, false when done
+   - Export in context type for UI to show loading indicators
+
+**Verification**:
+```bash
+npm run lint
+# Should pass with no TypeScript errors
+
+# Manual test:
+# 1. Start dev server: npm run dev
+# 2. Sign out if logged in
+# 3. Create new user account
+# 4. Verify: User sees empty state (no projects)
+# 5. Create a project
+# 6. Verify: Only that project appears
+# 7. Sign out and sign in as different user
+# 8. Verify: Second user sees empty state
+```
 
 ---
 
-### FEAT-003: Frontend State Management & UI
+### FEAT-002: Filter Issues and Sprints by Accessible Projects
+
+**Priority**: High - Prevents data leakage in UI
+
 **Files**:
-- src/context/ProjectContext.tsx (major refactor)
-- src/types/index.ts (add ProjectMember, ProjectRole types)
-- src/utils/permissions.ts (new)
-- src/components/InviteMemberModal.tsx (new)
-- src/components/ProjectsView.tsx (modify)
-- src/components/HomePage.tsx (modify)
+- `h:\vision for uniqtech\src\context\ProjectContext.tsx` (lines 300-400, issues/sprints getters)
+- `h:\vision for uniqtech\src\components\KanbanBoard.tsx`
+- `h:\vision for uniqtech\src\components\BacklogView.tsx`
 
-**What**: Replace localStorage-first loading with API-first (when configured). Add fetchUserProjects(), inviteMember(), removeMember() functions to context. Create permission utility with canInviteMembers, canEditIssue, etc. Build InviteMemberModal component for team management. Update ProjectsView to show Invite button and member count. Update HomePage to show welcome screen for new users with no projects.
+**Changes Required**:
 
-**Verification**: `npm run build`, `npm run dev`. Test with Supabase env vars: new user sees empty state. Test without env vars: localStorage fallback works.
+1. **Create Filtered Issues Getter in Context** (after line 300)
+   ```typescript
+   const accessibleProjectIds = useMemo(() => 
+     projects.map(p => p.id), 
+     [projects]
+   );
+
+   const accessibleIssues = useMemo(() => 
+     issues.filter(issue => accessibleProjectIds.includes(issue.projectId)),
+     [issues, accessibleProjectIds]
+   );
+   ```
+
+2. **Create Filtered Sprints Getter in Context**
+   ```typescript
+   const accessibleSprints = useMemo(() => 
+     sprints.filter(sprint => accessibleProjectIds.includes(sprint.projectId)),
+     [sprints, accessibleProjectIds]
+   );
+   ```
+
+3. **Export Filtered Data Instead of Raw Data**
+   - In ProjectContextType interface, keep `issues` and `sprints` as exports
+   - But internally use filtered versions in all operations
+   - Ensure `activeSprint` calculation uses filtered sprints
+
+4. **Update Issue Fetch in Context**
+   - In `fetchUserProjects` success handler (line 250), also fetch issues for those projects
+   - Add API call: `GET /api/projects/${projectId}/issues` for each project
+   - Aggregate and set issues state
+
+5. **Clear Issues/Sprints on Logout**
+   - In `clerkSignOut`, add: `setIssues([])` and `setSprints([])`
+
+**Verification**:
+```bash
+npm run lint
+# Should pass
+
+# Manual test:
+# 1. User A creates Project A with Issue A1
+# 2. User B creates Project B with Issue B1
+# 3. Sign in as User A
+# 4. Verify: Only sees Issue A1, not B1
+# 5. Check Kanban board, backlog view
+# 6. Verify: No issues from Project B appear
+```
 
 ---
 
-### FEAT-004: Permission Gates Throughout UI
+### FEAT-003: Enhanced Backend Access Control with verifyProjectAccess Helper
+
+**Priority**: Critical - Security layer
+
 **Files**:
-- src/components/KanbanBoard.tsx (modify)
-- src/components/BacklogView.tsx (modify)
-- src/components/IssueDetailModal.tsx (modify)
-- src/components/CreateIssueModal.tsx (modify)
-- src/components/Navbar.tsx (modify)
-- src/components/Sidebar.tsx (verify)
-- src/utils/permissions.ts (add getUserRoleInProject helper)
+- `h:\vision for uniqtech\server.ts` (lines 300-350, add helper; apply to all endpoints)
 
-**What**: Apply role-based restrictions to all UI actions. Viewers cannot edit anything. Members can manage issues but not team. Admins can invite/remove members. Owners can delete projects. Disable/hide buttons, show permission tooltips, add role badges.
+**Changes Required**:
 
-**Verification**: `npm run build`, manual testing with multiple users of different roles. Create project as owner, invite viewer, verify viewer cannot edit. Invite member, verify member can create issues but not invite others.
+1. **Create Enhanced verifyProjectAccess Helper** (after line 350, after existing helper)
+   ```typescript
+   async function verifyProjectAccessEnhanced(
+     projectId: string, 
+     userId: string, 
+     requiredRole?: 'owner' | 'admin' | 'member'
+   ): Promise<{ hasAccess: boolean; role?: string; error?: string }> {
+     if (!supabase) {
+       return { hasAccess: false, error: 'Database not configured' };
+     }
+     
+     const { data, error } = await supabase
+       .from('project_members')
+       .select('role')
+       .eq('project_id', projectId)
+       .eq('user_id', userId)
+       .single();
+     
+     if (error || !data) {
+       return { hasAccess: false, error: 'No access to this project' };
+     }
+     
+     const userRole = (data as any).role;
+     
+     // Check required role
+     if (requiredRole) {
+       const roleHierarchy = { viewer: 0, member: 1, admin: 2, owner: 3 };
+       const userRoleLevel = roleHierarchy[userRole as keyof typeof roleHierarchy] || 0;
+       const requiredRoleLevel = roleHierarchy[requiredRole] || 0;
+       
+       if (userRoleLevel < requiredRoleLevel) {
+         return { 
+           hasAccess: false, 
+           role: userRole,
+           error: `Requires ${requiredRole} role or higher` 
+         };
+       }
+     }
+     
+     return { hasAccess: true, role: userRole };
+   }
+   ```
 
----
+2. **Apply to GET /api/projects/:id** (add new endpoint around line 650)
+   ```typescript
+   app.get('/api/projects/:id', requireAuth(), upsertClerkUser, async (req, res) => {
+     // Get user ID
+     // Call verifyProjectAccessEnhanced
+     // Return 403 if no access
+     // Return project details with members
+   });
+   ```
 
-## Implementation Order & Dependencies
+3. **Apply to All Issue Endpoints** (lines 1023, 1100+)
+   - GET /api/projects/:id/issues - Already has verifyProjectAccess ✅
+   - POST /api/projects/:id/issues - Already has verifyProjectAccess ✅
+   - PATCH /api/issues/:issueId - Verify via issue's project_id
+   - DELETE /api/issues/:issueId - Verify via issue's project_id
 
-1. **FEAT-001** (Supabase setup) - No dependencies, foundational
-2. **FEAT-002** (Backend APIs) - Depends on FEAT-001 (needs Supabase client)
-3. **FEAT-003** (Frontend state) - Depends on FEAT-002 (needs API endpoints)
-4. **FEAT-004** (Permission gates) - Depends on FEAT-003 (needs permission utils and member data)
+4. **Apply to Sprint Endpoints** (line 1565+)
+   - GET /api/projects/:id/sprints - Add verifyProjectAccess check
+   - POST /api/projects/:id/sprints - Add verifyProjectAccess check
+   - PATCH /api/sprints/:id - Verify via sprint's project_id
+   - DELETE /api/sprints/:id - Verify via sprint's project_id
 
-Sequential execution required - each feature builds on the previous.
+5. **Apply to Attachment Endpoints** (line 1400+)
+   - POST /api/projects/:projectId/issues/:issueId/attachments - Already checks membership ✅
+   - GET /api/projects/:projectId/issues/:issueId/attachments - Add check
+   - DELETE /api/attachments/:id - Verify via attachment → issue → project chain
 
----
+6. **Consistent 403 Responses**
+   - All denied access should return: `{ success: false, error: 'Access denied to this project' }`
+   - HTTP status: 403 Forbidden (not 404)
+   - Never leak project existence to non-members
 
-## TypeScript Type Additions
+**Verification**:
+```bash
+npm run lint
+# Should pass
 
-```typescript
-// src/types/index.ts additions
+# API Integration test:
+# 1. Start server: npm run dev:server
+# 2. Create test users and projects in Supabase
+# 3. Test with curl:
 
-export type ProjectRole = 'owner' | 'admin' | 'member' | 'viewer';
+curl -H "Authorization: Bearer <user1-token>" http://localhost:3000/api/projects/<user2-project-id>
+# Expected: 403 Forbidden
 
-export interface ProjectMember {
-  id: string;
-  userId: string;
-  projectId: string;
-  user: User;
-  role: ProjectRole;
-  invitedBy?: string;
-  invitedAt: string;
-}
+curl -H "Authorization: Bearer <user1-token>" http://localhost:3000/api/projects/<user1-project-id>/issues
+# Expected: 200 OK with issues
 
-// Update existing Project interface
-export interface Project {
-  id: string;
-  name: string;
-  key: string;
-  description: string;
-  lead: User;
-  template: 'Scrum' | 'Kanban' | 'Bug Tracking';
-  allowedIssueTypes: WorkItemType[];
-  defaultAssignee: 'unassigned' | 'lead';
-  iconGradient: string;
-  createdAt: string;
-  members?: ProjectMember[]; // NEW
-}
+curl -H "Authorization: Bearer <user1-token>" http://localhost:3000/api/projects/<user2-project-id>/issues
+# Expected: 403 Forbidden
 ```
 
 ---
 
-## Database Schema Summary
+### FEAT-004: Update UI Components to Handle Empty State and Loading
 
-**users**: id (uuid), clerk_user_id (text unique), email, name, avatar, role, department, created_at
+**Priority**: Medium - UX improvements
 
-**projects**: id (uuid), name, key (unique), description, lead_user_id (fk users), template, allowed_issue_types (jsonb), default_assignee, icon_gradient, created_at
+**Files**:
+- `h:\vision for uniqtech\src\components\ProjectsView.tsx` (lines 45-70)
+- `h:\vision for uniqtech\src\components\Navbar.tsx` (lines 100-140)
+- `h:\vision for uniqtech\src\components\KanbanBoard.tsx`
+- `h:\vision for uniqtech\src\components\BacklogView.tsx`
 
-**project_members**: id (uuid), project_id (fk projects cascade), user_id (fk users cascade), role (owner/admin/member/viewer), invited_by (fk users), invited_at, unique(project_id, user_id)
+**Changes Required**:
 
-**issues**: id (uuid), project_id (fk projects cascade), key (unique), title, description, type, priority, status, assignee_id (fk users), reporter_id (fk users), sprint_id (uuid), story_points, labels (jsonb), subtasks (jsonb), due_date, created_at, updated_at
+1. **ProjectsView - Add Loading State** (line 20)
+   - Import `isLoadingProjects` from context
+   - Show skeleton loaders while `isLoadingProjects === true`
+   - Show empty state when `projects.length === 0 && !isLoadingProjects`
+   - Empty state message: "No projects yet. Create your first project to get started."
 
-**sprints**: id (uuid), project_id (fk projects cascade), name, goal, start_date, end_date, status, completed_at, planned_points, completed_points
+2. **ProjectsView - Remove Unauthorized Projects**
+   - Already filters by `projects` from context
+   - But add safeguard: double-check user is member before showing
+   - Filter: `projects.filter(p => p.members?.some(m => m.userId === currentUser.id))`
 
-**comments**: id (uuid), issue_id (fk issues cascade), author_id (fk users), content, mentions (jsonb), created_at
+3. **Navbar - Project Dropdown**
+   - Already uses `projects` from context ✅
+   - Add loading indicator in dropdown when `isLoadingProjects`
+   - Handle empty projects array gracefully
 
-**RLS Policies**:
-- users: all authenticated can SELECT (team directory)
-- projects: SELECT where user is lead OR in project_members; INSERT by authenticated; UPDATE/DELETE by owners only
-- project_members: SELECT where user can see project; INSERT by admins/owners; DELETE by admins/owners
-- issues/sprints/comments: all operations only if user in project_members of parent project
+4. **KanbanBoard - Filter Issues**
+   - Currently uses `issues` from context
+   - Add safeguard: `const boardIssues = issues.filter(i => i.projectId === activeProject.id)`
+   - Show empty state: "No issues in this project yet."
+
+5. **BacklogView - Filter Issues and Sprints**
+   - Filter issues: `issues.filter(i => i.projectId === activeProject.id)`
+   - Filter sprints: `sprints.filter(s => s.projectId === activeProject.id)`
+   - Show empty states appropriately
+
+**Verification**:
+```bash
+npm run lint
+# Should pass
+
+npm run dev
+# Manual UI test:
+# 1. Sign in as new user
+# 2. Verify: See "No projects yet" message
+# 3. Create project
+# 4. Verify: Project appears immediately
+# 5. Check all views (Board, Backlog, Projects)
+# 6. Verify: No errors in browser console
+```
 
 ---
 
-## API Endpoint Contracts
+### FEAT-005: Add Sprints API Endpoints (Currently Missing)
 
-### POST /api/projects
-**Request**: 
-```json
-{
-  "name": "New Project",
-  "key": "NP",
-  "description": "...",
-  "template": "Scrum",
-  "allowedIssueTypes": ["story", "bug"],
-  "defaultAssignee": "unassigned",
-  "iconGradient": "from-blue-600..."
-}
-```
-**Response**: 
-```json
-{
-  "id": "uuid",
-  "name": "New Project",
-  "key": "NP",
-  "lead": { user object },
-  "members": [{ user object with role: "owner" }],
-  ...
-}
-```
+**Priority**: High - API completeness
 
-### GET /api/projects
-**Request**: Headers: `Authorization: Bearer <clerk-jwt>`
-**Response**: 
-```json
-[
-  {
-    "id": "uuid",
-    "name": "Project A",
-    "members": [{ id, userId, user, role, invitedAt }],
-    ...
-  }
-]
-```
+**Files**:
+- `h:\vision for uniqtech\server.ts` (add after line 1565)
 
-### POST /api/projects/:id/invite
-**Request**:
-```json
-{
-  "email": "user@example.com",
-  "role": "member"
-}
-```
-**Response**:
-```json
-{
-  "success": true,
-  "member": { id, userId, user, role, invitedAt }
-}
-```
+**Changes Required**:
 
-### Other endpoints follow REST conventions: GET returns data, POST creates, PATCH updates, DELETE removes.
+1. **GET /api/projects/:id/sprints** (new endpoint)
+   ```typescript
+   app.get('/api/projects/:id/sprints', requireAuth(), upsertClerkUser, async (req, res) => {
+     if (!supabase) return res.status(503).json({ success: false, error: 'Supabase not configured' });
+     
+     const projectId = req.params.id;
+     const authReq = req as AuthRequest;
+     const supabaseUserId = await getSupabaseUserId(authReq.auth?.userId, authReq.customUserId);
+     
+     if (!supabaseUserId) {
+       return res.status(400).json({ success: false, error: 'User not found' });
+     }
+     
+     const hasAccess = await verifyProjectAccess(projectId, supabaseUserId);
+     if (!hasAccess) {
+       return res.status(403).json({ success: false, error: 'Access denied to this project' });
+     }
+     
+     const { data: sprints, error } = await supabase
+       .from('sprints')
+       .select('*')
+       .eq('project_id', projectId)
+       .order('created_at', { ascending: false });
+     
+     if (error) {
+       console.error('[Supabase] Error fetching sprints:', error);
+       return res.status(400).json({ success: false, error: error.message });
+     }
+     
+     res.json({ success: true, sprints: sprints || [] });
+   });
+   ```
+
+2. **POST /api/projects/:id/sprints** (new endpoint)
+   - Verify user has member role or higher
+   - Create sprint in database
+   - Return created sprint
+
+3. **PATCH /api/sprints/:id** (new endpoint)
+   - Get sprint to find project_id
+   - Verify user has access to project
+   - Update sprint fields
+   - Return updated sprint
+
+4. **DELETE /api/sprints/:id** (new endpoint)
+   - Verify user is admin/owner
+   - Delete sprint
+   - Return success
+
+5. **Update ProjectContext to Use Sprint API**
+   - In `fetchUserProjects`, fetch sprints for each project
+   - In `createSprint`, POST to API
+   - In `startSprint`/`completeSprint`, PATCH to API
+   - Fallback to localStorage if API unavailable
+
+**Verification**:
+```bash
+npm run lint
+# Should pass
+
+# API test:
+curl -H "Authorization: Bearer <token>" http://localhost:3000/api/projects/<project-id>/sprints
+# Expected: 200 OK with sprints array
+
+# Integration test:
+# 1. Create sprint in UI
+# 2. Check Supabase sprints table
+# 3. Verify sprint appears
+# 4. Refresh page
+# 5. Verify sprint persists
+```
 
 ---
 
-## Environment Variables
+## Edge Cases to Handle
 
-Add to .env (not committed):
-```
-VITE_SUPABASE_URL=https://xxxxx.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJhbGc...
-```
+1. **Race Conditions**
+   - Multiple API calls during login/logout
+   - Solution: Use loading flags, cancel stale requests
 
-Add to .env.example (committed):
-```
-# Supabase (optional - app falls back to localStorage if not configured)
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-```
+2. **Stale Data After Membership Changes**
+   - User removed from project while viewing it
+   - Solution: Handle 403 errors, redirect to projects view, show toast message
 
-Server also needs (for admin operations):
-```
-SUPABASE_URL=https://xxxxx.supabase.co
-SUPABASE_SERVICE_KEY=eyJhbGc... (service_role key, not anon key)
-```
+3. **Mixed LocalStorage and API Data**
+   - LocalStorage has old projects, API returns new ones
+   - Solution: When API succeeds, trust API data over localStorage
+
+4. **Empty Active Project**
+   - User has no projects, activeProject is placeholder
+   - Solution: Check `projects.length > 0` before rendering boards
+
+5. **Viewer Role Restrictions**
+   - Viewers shouldn't see "Create Issue" buttons
+   - Solution: Already handled by `canEditIssue` helper ✅
+
+6. **Demo Mode vs Production Mode**
+   - Different behavior when Supabase not configured
+   - Solution: Always check `isSupabaseConfigured` flag
 
 ---
 
 ## Testing Strategy
 
-### Build Verification
-- Run `npm run build` after each feature
-- Run `npm run lint` (tsc --noEmit) to catch type errors
+### Unit Tests
+```bash
+npm run lint
+# Type checking must pass for all modified files
+```
 
-### Manual Testing Checklist (FEAT-004)
-1. **New User Flow**: Sign up with Clerk → See empty projects list + Create Project button
-2. **Project Creation**: Create project → Verify saved via API (Network tab)
-3. **Owner Permissions**: All features accessible
-4. **Invite Viewer**: Invite user as viewer → Sign in as viewer → Verify cannot create/edit
-5. **Invite Member**: Invite as member → Verify can create issues but not invite others
-6. **Invite Admin**: Invite as admin → Verify can manage team
-7. **Fallback Mode**: Remove Supabase env vars → App still works via localStorage
+### Integration Tests (Manual)
 
-### No Automated Tests
-- No test framework exists in package.json
-- All verification is manual + build checks
+**Test Suite 1: New User Flow**
+1. Clear browser data
+2. Sign up as new user
+3. ✓ Should see empty state
+4. Create first project
+5. ✓ Should see only that project
+6. Create issue in project
+7. ✓ Should see issue in board
+
+**Test Suite 2: Multi-User Access Control**
+1. User A creates Project X
+2. User B signs up
+3. ✓ User B should NOT see Project X
+4. User A invites User B to Project X
+5. User B refreshes
+6. ✓ User B should now see Project X
+7. ✓ Both see same issues
+
+**Test Suite 3: API Security**
+1. Get User A's project ID
+2. Try to access with User B's token
+3. ✓ Should return 403
+4. Try to create issue in User A's project
+5. ✓ Should return 403
+
+**Test Suite 4: LocalStorage Fallback**
+1. Set invalid Supabase URL in .env
+2. Restart server
+3. Create project
+4. ✓ Should work in localStorage mode
+5. Refresh page
+6. ✓ Data persists
+7. Switch users
+8. ✓ Each user has separate data
 
 ---
 
-## Risks & Mitigations
+## Rollback Plan
 
-**Risk**: Supabase RLS policies too restrictive, block legitimate operations
-**Mitigation**: Use service_role key on server-side for admin operations, test policies thoroughly
+If issues arise:
 
-**Risk**: Breaking existing localStorage-based workflow
-**Mitigation**: Graceful fallback when Supabase not configured, maintain localStorage code paths
+1. **Revert ProjectContext Changes**
+   ```bash
+   git checkout HEAD -- src/context/ProjectContext.tsx
+   ```
 
-**Risk**: Clerk user sync to Supabase fails
-**Mitigation**: Auto-upsert middleware on every authenticated request, idempotent INSERT ON CONFLICT
+2. **Revert Server Changes**
+   ```bash
+   git checkout HEAD -- server.ts
+   ```
 
-**Risk**: Migration complexity for existing data
-**Mitigation**: Fresh install assumed (no existing production data to migrate)
+3. **Database State**
+   - RLS policies are non-destructive
+   - No data loss from backend changes
+   - Can safely iterate
 
 ---
 
 ## Success Criteria
 
-- New users logging in with Clerk see empty project list with "Create Project" prompt
-- Users can only see projects they own or are invited to (no leaked data)
-- Project owners can invite members with specific roles (owner/admin/member/viewer)
-- Viewers cannot create or edit any content (UI disabled)
-- Members can create and edit issues but not manage team
-- Admins can invite/remove members
-- Owners can delete projects
-- App works in localhost dev mode without Supabase (localStorage fallback)
-- Build passes: `npm run build` succeeds
+✅ New users see empty workspace, not demo data  
+✅ Users only see projects they created or were invited to  
+✅ Issues and sprints filtered by project membership  
+✅ All API endpoints enforce access control  
+✅ 403 responses for unauthorized access (not 404)  
+✅ Loading states shown during async operations  
+✅ No TypeScript errors (`npm run lint` passes)  
+✅ Works in both Supabase mode and localStorage fallback  
+✅ User can switch accounts and see correct data  
+✅ Invitation flow still works correctly  
 
+---
+
+## Implementation Order
+
+Execute FEATs sequentially in this order:
+
+1. **FEAT-001** - Critical foundation, blocks others
+2. **FEAT-002** - Depends on FEAT-001's filtered projects
+3. **FEAT-003** - Backend security layer, independent
+4. **FEAT-005** - API completeness, needed for FEAT-002
+5. **FEAT-004** - UI polish, depends on all above
+
+---
+
+## Build and Test Commands
+
+**Verify TypeScript**:
+```bash
+npm run lint
+```
+
+**Run Development**:
+```bash
+npm run dev
+```
+
+**Build for Production**:
+```bash
+npm run build
+```
+
+**Start Production Server**:
+```bash
+npm start
+```
+
+---
+
+## Files Summary
+
+**Modified (8 files)**:
+1. `src/context/ProjectContext.tsx` - Core access control logic
+2. `src/components/ProjectsView.tsx` - Filter and empty state
+3. `src/components/Navbar.tsx` - Project dropdown filter
+4. `src/components/KanbanBoard.tsx` - Issue filtering
+5. `src/components/BacklogView.tsx` - Issue/sprint filtering
+6. `server.ts` - Enhanced access control, sprint endpoints
+7. `src/types/index.ts` - Add loading state type (if needed)
+8. `.env.example` - Update comments (if needed)
+
+**New (0 files)**: No new files needed
+
+**Database**: No schema changes needed, RLS policies already exist ✅
+
+---
+
+## Notes
+
+- Existing backend already has good foundation with `verifyProjectAccess` helper
+- RLS policies in Supabase provide defense-in-depth
+- Main issue is frontend loading all demo projects without filtering
+- Solution is primarily frontend refactoring + backend completeness
+- Backward compatible: localStorage fallback mode still works
+- No breaking changes to API contracts
+
+---
+
+## Timeline Estimate
+
+- FEAT-001: 1-2 hours (critical changes)
+- FEAT-002: 1 hour (filtering logic)
+- FEAT-003: 2 hours (backend endpoints)
+- FEAT-005: 1-2 hours (sprint API)
+- FEAT-004: 1 hour (UI updates)
+- Testing: 1 hour (manual verification)
+
+**Total: 7-9 hours** for complete implementation and testing.

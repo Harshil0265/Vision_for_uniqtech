@@ -29,6 +29,7 @@ interface ProjectContextType {
   isSupabaseConfigured: boolean;
   // Data
   projects: Project[];
+  isLoadingProjects: boolean;
   activeProject: Project;
   setActiveProject: (p: Project) => void;
   issues: Issue[];
@@ -111,16 +112,9 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     return !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
   }, []);
 
-  // Projects
-  const [projects, setProjects] = useState<Project[]>(() => {
-    const saved = localStorage.getItem('vision_projects');
-    if (saved) {
-      return JSON.parse(saved);
-    }
-    // For demo/localStorage mode: only show projects where current user is a member
-    // This will be filtered based on currentUser in useEffect
-    return [];
-  });
+  // Projects - always start empty, will be populated by useEffect
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(false);
 
   const [activeProject, setActiveProject] = useState<Project>(() => {
     const saved = localStorage.getItem('vision_active_project_id');
@@ -149,12 +143,12 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   });
 
   const [teamMembers, setTeamMembers] = useState<User[]>(() => {
-    const saved = localStorage.getItem('vision_team_members') || localStorage.getItem('omniplane_team_members');
+    const saved = localStorage.getItem('vision_team_members');
     return saved ? JSON.parse(saved) : TEAM_MEMBERS;
   });
 
   const [currentUser, setCurrentUser] = useState<User>(() => {
-    const saved = localStorage.getItem('vision_current_user') || localStorage.getItem('omniplane_current_user');
+    const saved = localStorage.getItem('vision_current_user');
     return saved ? JSON.parse(saved) : TEAM_MEMBERS[1]; // Alex Rivera by default
   });
 
@@ -170,7 +164,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   });
 
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
-    const saved = localStorage.getItem('vision_notifications') || localStorage.getItem('omniplane_notifications');
+    const saved = localStorage.getItem('vision_notifications');
     return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
   });
 
@@ -203,14 +197,16 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     localStorage.setItem('vision_projects', JSON.stringify(projects));
   }, [projects]);
 
-  // Fetch user projects from API on mount if Supabase is configured
+  // Fetch user projects from API when session changes (login/logout)
   useEffect(() => {
     const fetchUserProjects = async () => {
       if (!isSupabaseConfigured || !clerkSession?.token) {
-        console.log('[ProjectContext] Using localStorage: Supabase not configured or no session');
+        console.log('[ProjectContext] Using localStorage mode: Supabase not configured or no session');
+        setIsLoadingProjects(false);
         return;
       }
 
+      setIsLoadingProjects(true);
       try {
         const response = await fetch('/api/projects', {
           method: 'GET',
@@ -226,35 +222,68 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             setProjects(data.projects);
             console.log('[ProjectContext] Loaded projects from API:', data.projects.length);
             
-            // Set active project if not already set
+            // Set active project if we have projects and current activeProject is not accessible
             if (data.projects.length > 0 && !data.projects.find((p: Project) => p.id === activeProject.id)) {
               setActiveProject(data.projects[0]);
+            } else if (data.projects.length === 0) {
+              // No projects accessible, clear activeProject
+              setActiveProject(INITIAL_PROJECTS[0]); // Placeholder for UI
             }
           }
         } else {
-          console.warn('[ProjectContext] Failed to fetch projects from API, using localStorage');
+          console.warn('[ProjectContext] Failed to fetch projects from API, status:', response.status);
         }
       } catch (error) {
-        console.warn('[ProjectContext] Error fetching projects, using localStorage:', error);
+        console.warn('[ProjectContext] Error fetching projects:', error);
+      } finally {
+        setIsLoadingProjects(false);
       }
     };
 
     fetchUserProjects();
-  }, [isSupabaseConfigured]); // Only run once on mount
+  }, [isSupabaseConfigured, clerkSession?.token]); // Re-run when session changes
 
   // Load demo projects filtered by current user in localStorage mode
   useEffect(() => {
     // Only load demo data if:
     // 1. Not using Supabase (localStorage mode)
-    // 2. No projects in state yet
-    // 3. No saved projects in localStorage
-    if (!isSupabaseConfigured && projects.length === 0) {
+    // 2. Have a valid currentUser
+    if (!isSupabaseConfigured && currentUser.id) {
       const saved = localStorage.getItem('vision_projects');
-      if (!saved) {
-        // Filter INITIAL_PROJECTS to only show projects where current user is a member
+      
+      if (saved) {
+        // Load from localStorage and filter by user membership
+        const savedProjects = JSON.parse(saved);
+        const userProjects = savedProjects.filter((proj: Project) => 
+          proj.members?.some(member => member.userId === currentUser.id)
+        );
+        setProjects(userProjects);
+        
+        // Also filter issues and sprints
+        const savedIssues = localStorage.getItem('vision_issues');
+        const savedSprints = localStorage.getItem('vision_sprints');
+        
+        if (savedIssues) {
+          const allIssues = JSON.parse(savedIssues);
+          const projectIds = userProjects.map((p: Project) => p.id);
+          const userIssues = allIssues.filter((issue: Issue) => projectIds.includes(issue.projectId));
+          setIssues(userIssues);
+        }
+        
+        if (savedSprints) {
+          const allSprints = JSON.parse(savedSprints);
+          const projectIds = userProjects.map((p: Project) => p.id);
+          const userSprints = allSprints.filter((sprint: Sprint) => projectIds.includes(sprint.projectId));
+          setSprints(userSprints);
+        }
+        
+        console.log(`[ProjectContext] Loaded ${userProjects.length} projects from localStorage for user ${currentUser.name}`);
+      } else {
+        // First time: Filter INITIAL_PROJECTS to only show projects where current user is a member
         const userProjects = INITIAL_PROJECTS.filter(proj => 
           proj.members?.some(member => member.userId === currentUser.id)
         );
+        
         console.log(`[ProjectContext] Loaded ${userProjects.length} demo projects for user ${currentUser.name}`);
         
         if (userProjects.length > 0) {
@@ -269,6 +298,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
           setSprints(userSprints);
         } else {
           console.log(`[ProjectContext] User ${currentUser.name} has no demo projects - starting with empty workspace`);
+          // Clear everything for users with no projects
+          setProjects([]);
+          setIssues([]);
+          setSprints([]);
         }
       }
     }
@@ -332,9 +365,27 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     return () => clearInterval(interval);
   }, []);
 
+  // Filter issues and sprints by accessible projects only
+  const accessibleProjectIds = useMemo(() => 
+    projects.map(p => p.id), 
+    [projects]
+  );
+
+  // Filtered issues - only from projects user has access to
+  const accessibleIssues = useMemo(() => 
+    issues.filter(issue => accessibleProjectIds.includes(issue.projectId)),
+    [issues, accessibleProjectIds]
+  );
+
+  // Filtered sprints - only from projects user has access to
+  const accessibleSprints = useMemo(() => 
+    sprints.filter(sprint => accessibleProjectIds.includes(sprint.projectId)),
+    [sprints, accessibleProjectIds]
+  );
+
   const activeSprint = useMemo(() => {
-    return sprints.find(s => s.status === 'active' && s.projectId === activeProject.id);
-  }, [sprints, activeProject]);
+    return accessibleSprints.find(s => s.status === 'active' && s.projectId === activeProject.id);
+  }, [accessibleSprints, activeProject]);
 
   const unreadNotificationCount = useMemo(() => {
     return notifications.filter(n => !n.read).length;
@@ -665,15 +716,15 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       prev.map(issue => {
         if (issue.id !== id) return issue;
 
-        // Check if assignee is being set for the first time
-        const isFirstAssignment = updates.assignee && !issue.assignee;
+        // Check if assignee is changing (set or reassigned)
+        const isAssigneeChanging = updates.assignee !== undefined && updates.assignee?.id !== issue.assignee?.id;
         
         const updated = {
           ...issue,
           ...updates,
           updatedAt: new Date().toISOString(),
-          // Set assignedAt when assignee is first set
-          ...(isFirstAssignment ? { assignedAt: new Date().toISOString() } : {})
+          // Set assignedAt whenever assignee changes
+          ...(isAssigneeChanging ? { assignedAt: new Date().toISOString() } : {})
         };
 
         // If priority changed to blocker, trigger in-app notification
@@ -1220,8 +1271,16 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         });
       } catch {}
     }
+    
+    // Clear all user-specific data on logout
     setClerkSession(null);
     setCurrentUser(teamMembers[0]);
+    setProjects([]);
+    setIssues([]);
+    setSprints([]);
+    setActiveProject(INITIAL_PROJECTS[0]); // Set to placeholder
+    
+    console.log('[ProjectContext] User signed out - cleared all data');
   };
 
   return (
@@ -1229,11 +1288,12 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       value={{
         isSupabaseConfigured,
         projects,
+        isLoadingProjects,
         activeProject,
         setActiveProject,
-        issues,
+        issues: accessibleIssues, // Export filtered issues
         columns,
-        sprints,
+        sprints: accessibleSprints, // Export filtered sprints
         activeSprint,
         teamMembers,
         currentUser,

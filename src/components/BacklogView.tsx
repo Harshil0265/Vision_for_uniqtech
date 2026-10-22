@@ -34,6 +34,7 @@ export const BacklogView: React.FC = () => {
   const [newSprintGoal, setNewSprintGoal] = useState('');
   const [sortBy, setSortBy] = useState<'default' | 'dueDate-asc' | 'dueDate-desc'>('default');
 
+  // Safeguard: Only show sprints and issues from the active project
   const projectSprints = sprints.filter(s => s.projectId === activeProject.id);
   const projectIssues = issues.filter(i => i.projectId === activeProject.id);
 
