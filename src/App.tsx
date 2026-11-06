@@ -4,6 +4,7 @@
  */
 
 import React from 'react';
+import { AuthProvider } from './context/AuthContext';
 import { ProjectProvider, useProject } from './context/ProjectContext';
 import { AuthWrapper } from './components/AuthWrapper';
 import { Navbar } from './components/Navbar';
@@ -16,7 +17,6 @@ import { TeamView } from './components/TeamView';
 import { IssueDetailModal } from './components/IssueDetailModal';
 import { CreateIssueModal } from './components/CreateIssueModal';
 import { CreateProjectModal } from './components/CreateProjectModal';
-import { ClerkAuthModal } from './components/ClerkAuthModal';
 import { Activity, ShieldCheck } from 'lucide-react';
 
 const AppContent: React.FC = () => {
@@ -55,7 +55,7 @@ const AppContent: React.FC = () => {
         </main>
       </div>
 
-      {/* Bottom Real-Time Event & Supabase Broadcast Ticker */}
+      {/* Bottom activity ticker */}
       <footer className="h-7 bg-white border-t border-slate-200/90 px-4 flex items-center justify-between text-[11px] text-slate-500 select-none shrink-0 z-20">
         <div className="flex items-center gap-3 overflow-hidden">
           <div className="flex items-center gap-1.5 shrink-0 text-slate-700">
@@ -65,7 +65,7 @@ const AppContent: React.FC = () => {
               }`}
             />
             <span className="font-mono text-[10px] text-slate-500 font-medium">
-              Supabase Realtime [{activeProject.key}:broadcast-channel]
+              Workspace [{activeProject.key}]
             </span>
           </div>
 
@@ -86,7 +86,7 @@ const AppContent: React.FC = () => {
         <div className="hidden md:flex items-center gap-4 shrink-0 font-mono text-[10px] text-slate-500">
           <span className="flex items-center gap-1 font-medium">
             <ShieldCheck className="w-3 h-3 text-emerald-600" />
-            <span>Clerk RBAC: Active</span>
+            <span>JWT session · RBAC active</span>
           </span>
         </div>
       </footer>
@@ -95,17 +95,18 @@ const AppContent: React.FC = () => {
       <IssueDetailModal />
       <CreateIssueModal />
       <CreateProjectModal />
-      <ClerkAuthModal />
     </div>
   );
 };
 
 export default function App() {
   return (
-    <ProjectProvider>
-      <AuthWrapper>
-        <AppContent />
-      </AuthWrapper>
-    </ProjectProvider>
+    <AuthProvider>
+      <ProjectProvider>
+        <AuthWrapper>
+          <AppContent />
+        </AuthWrapper>
+      </ProjectProvider>
+    </AuthProvider>
   );
 }

@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode, useMemo } from 'react';
 import confetti from 'canvas-confetti';
+import { useAuth } from './AuthContext';
 import {
   Issue,
   KanbanColumn,
@@ -11,7 +12,6 @@ import {
   WorkItemType,
   Priority,
   Project,
-  ClerkSession,
   ProjectMember,
   ProjectRole
 } from '../types';
@@ -25,8 +25,6 @@ import {
 } from '../data/mockData';
 
 interface ProjectContextType {
-  // Supabase configuration
-  isSupabaseConfigured: boolean;
   // Data
   projects: Project[];
   isLoadingProjects: boolean;
@@ -67,8 +65,6 @@ interface ProjectContextType {
   setIsCreateModalOpen: (open: boolean) => void;
   isCreateProjectModalOpen: boolean;
   setIsCreateProjectModalOpen: (open: boolean) => void;
-  isAuthModalOpen: boolean;
-  setIsAuthModalOpen: (open: boolean) => void;
   setSelectedIssue: (issue: Issue | null) => void;
 
   // Actions
@@ -89,7 +85,6 @@ interface ProjectContextType {
   addColumn: (name: string, wipLimit: number, color: string, category?: 'todo' | 'in_progress' | 'done') => void;
   updateColumn: (id: string, updates: Partial<KanbanColumn>) => void;
   deleteColumn: (id: string) => void;
-  switchUser: (user: User) => void;
   markAllNotificationsRead: () => void;
 
   // Project Members & Invitations
@@ -97,20 +92,12 @@ interface ProjectContextType {
   removeMember: (projectId: string, userId: string) => Promise<void>;
   updateMemberRole: (projectId: string, userId: string, newRole: ProjectRole) => Promise<void>;
 
-  // Clerk Auth Integration
-  clerkSession: ClerkSession | null;
-  clerkSignUp: (data: { name: string; email: string; password?: string; role?: string; department?: string }) => Promise<{ success: boolean; user?: User; error?: string }>;
-  clerkSignIn: (data: { email: string; password?: string }) => Promise<{ success: boolean; user?: User; error?: string }>;
-  clerkSignOut: () => Promise<void>;
 }
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
 export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Check if Supabase is configured
-  const isSupabaseConfigured = useMemo(() => {
-    return !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
-  }, []);
+  const { user: authUser, status: authStatus } = useAuth();
 
   // Projects - always start empty, will be populated by useEffect
   const [projects, setProjects] = useState<Project[]>([]);
@@ -152,23 +139,30 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     return saved ? JSON.parse(saved) : TEAM_MEMBERS[1]; // Alex Rivera by default
   });
 
-  const [clerkSession, setClerkSession] = useState<ClerkSession | null>(() => {
-    const saved = localStorage.getItem('vision_clerk_session');
-    if (saved) return JSON.parse(saved);
-    return {
-      token: 'sess_clerk_live_alex_rivera',
-      userId: 'user-2',
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 86400000 * 7).toISOString()
-    };
-  });
-
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
     const saved = localStorage.getItem('vision_notifications');
     return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
   });
 
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
+
+  // The signed-in account (from the JWT session) is the current user.
+  useEffect(() => {
+    if (!authUser) return;
+    setCurrentUser(authUser);
+    setTeamMembers(prev => (prev.some(u => u.id === authUser.id) ? prev : [authUser, ...prev]));
+  }, [authUser]);
+
+  // On sign-out, drop everything that belonged to the previous user.
+  useEffect(() => {
+    if (authStatus !== 'unauthenticated') return;
+    setProjects([]);
+    setIssues([]);
+    setSprints([]);
+    setSelectedIssue(null);
+    setActiveProject(INITIAL_PROJECTS[0]); // placeholder, the UI handles "no projects"
+  }, [authStatus]);
+
 
   // Filters & Tabs
   const [activeTab, setActiveTab] = useState<ViewTab>('board');
@@ -182,73 +176,44 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   // Realtime simulation state
   const [realtimeStatus, setRealtimeStatus] = useState<'connected' | 'syncing'>('connected');
   const [lastSyncTime, setLastSyncTime] = useState<Date>(new Date());
   const [recentActivity, setRecentActivity] = useState<{ text: string; time: string; key?: string }[]>([
-    { text: 'Live Realtime Channel [vision-sync:v2] established via Supabase WebSockets', time: 'Just now' },
+    { text: 'Workspace loaded from local browser storage', time: 'Just now' },
     { text: 'Sprint 24 active with 34 committed story points in Vision', time: '5m ago' }
   ]);
 
-  // Persist state
+  // Which user's workspace is currently loaded into state. Nothing is written back to storage
+  // until this matches the signed-in account, so a fresh page load or a sign-out can never
+  // overwrite saved data with an empty workspace.
+  const loadedFor = useRef<string | null>(null);
+  const canPersist = authStatus === 'authenticated' && !!authUser && authUser.id === currentUser.id && loadedFor.current === currentUser.id;
+
+  const readSaved = <T,>(key: string): T[] => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(key) || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  // Projects/issues/sprints of OTHER accounts on this browser are kept untouched when saving.
+  const isMyProject = (proj: Project) => !!proj.members?.some(m => m.userId === currentUser.id);
+  const otherProjectIds = () => new Set(readSaved<Project>('vision_projects').filter(p => !isMyProject(p)).map(p => p.id));
+
   useEffect(() => {
-    localStorage.setItem('vision_projects', JSON.stringify(projects));
+    if (!canPersist) return;
+    const others = readSaved<Project>('vision_projects').filter(p => !isMyProject(p));
+    localStorage.setItem('vision_projects', JSON.stringify([...others, ...projects]));
   }, [projects]);
 
-  // Fetch user projects from API when session changes (login/logout)
+  // Load the signed-in user's projects from localStorage (demo data on first run)
   useEffect(() => {
-    const fetchUserProjects = async () => {
-      if (!isSupabaseConfigured || !clerkSession?.token) {
-        console.log('[ProjectContext] Using localStorage mode: Supabase not configured or no session');
-        setIsLoadingProjects(false);
-        return;
-      }
-
-      setIsLoadingProjects(true);
-      try {
-        const response = await fetch('/api/projects', {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${clerkSession.token}`,
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data.projects && Array.isArray(data.projects)) {
-            setProjects(data.projects);
-            console.log('[ProjectContext] Loaded projects from API:', data.projects.length);
-            
-            // Set active project if we have projects and current activeProject is not accessible
-            if (data.projects.length > 0 && !data.projects.find((p: Project) => p.id === activeProject.id)) {
-              setActiveProject(data.projects[0]);
-            } else if (data.projects.length === 0) {
-              // No projects accessible, clear activeProject
-              setActiveProject(INITIAL_PROJECTS[0]); // Placeholder for UI
-            }
-          }
-        } else {
-          console.warn('[ProjectContext] Failed to fetch projects from API, status:', response.status);
-        }
-      } catch (error) {
-        console.warn('[ProjectContext] Error fetching projects:', error);
-      } finally {
-        setIsLoadingProjects(false);
-      }
-    };
-
-    fetchUserProjects();
-  }, [isSupabaseConfigured, clerkSession?.token]); // Re-run when session changes
-
-  // Load demo projects filtered by current user in localStorage mode
-  useEffect(() => {
-    // Only load demo data if:
-    // 1. Not using Supabase (localStorage mode)
-    // 2. Have a valid currentUser
-    if (!isSupabaseConfigured && currentUser.id) {
+    if (authStatus === 'authenticated' && authUser && authUser.id === currentUser.id) {
+      loadedFor.current = currentUser.id;
       const saved = localStorage.getItem('vision_projects');
       
       if (saved) {
@@ -305,14 +270,17 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
       }
     }
-  }, [isSupabaseConfigured, currentUser.id]); // Re-run when user changes
+  }, [authStatus, authUser?.id, currentUser.id]); // Re-run when the signed-in user changes
 
   useEffect(() => {
     localStorage.setItem('vision_active_project_id', activeProject.id);
   }, [activeProject]);
 
   useEffect(() => {
-    localStorage.setItem('vision_issues', JSON.stringify(issues));
+    if (!canPersist) return;
+    const others = otherProjectIds();
+    const kept = readSaved<Issue>('vision_issues').filter(i => others.has(i.projectId));
+    localStorage.setItem('vision_issues', JSON.stringify([...kept, ...issues]));
   }, [issues]);
 
   useEffect(() => {
@@ -320,7 +288,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   }, [columns]);
 
   useEffect(() => {
-    localStorage.setItem('vision_sprints', JSON.stringify(sprints));
+    if (!canPersist) return;
+    const others = otherProjectIds();
+    const kept = readSaved<Sprint>('vision_sprints').filter(sp => others.has(sp.projectId));
+    localStorage.setItem('vision_sprints', JSON.stringify([...kept, ...sprints]));
   }, [sprints]);
 
   useEffect(() => {
@@ -330,14 +301,6 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   useEffect(() => {
     localStorage.setItem('vision_current_user', JSON.stringify(currentUser));
   }, [currentUser]);
-
-  useEffect(() => {
-    if (clerkSession) {
-      localStorage.setItem('vision_clerk_session', JSON.stringify(clerkSession));
-    } else {
-      localStorage.removeItem('vision_clerk_session');
-    }
-  }, [clerkSession]);
 
   useEffect(() => {
     localStorage.setItem('vision_notifications', JSON.stringify(notifications));
@@ -353,7 +316,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
   }, [issues]);
 
-  // Periodic heartbeat / Supabase live pulse simulation
+  // Periodic heartbeat (sync status indicator)
   useEffect(() => {
     const interval = setInterval(() => {
       setRealtimeStatus('syncing');
@@ -424,53 +387,6 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       }]
     };
 
-    // Try to create via API if Supabase is configured
-    if (isSupabaseConfigured && clerkSession?.token) {
-      try {
-        const response = await fetch('/api/projects', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${clerkSession.token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(newProject)
-        });
-
-        if (response.ok) {
-          const result = await response.json();
-          const createdProject = result.project || newProject;
-          setProjects(prev => [...prev, createdProject]);
-          setActiveProject(createdProject);
-          
-          // Create initial sprint for Scrum
-          if (createdProject.template === 'Scrum') {
-            const initialSprint: Sprint = {
-              id: `sprint-${Date.now()}`,
-              projectId: createdProject.id,
-              name: `${createdProject.name.split(' ')[0]} Sprint 1`,
-              goal: 'Initial sprint delivery and architecture foundation.',
-              startDate: new Date().toISOString().split('T')[0],
-              endDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
-              status: 'active',
-              plannedPoints: 13,
-              completedPoints: 0
-            };
-            setSprints(prev => [...prev, initialSprint]);
-          }
-
-          setRecentActivity(prev => [
-            { text: `${currentUser.name} created new project: ${createdProject.name} [${createdProject.key}]`, time: 'Just now' },
-            ...prev
-          ]);
-
-          return createdProject;
-        }
-      } catch (error) {
-        console.warn('[ProjectContext] Failed to create project via API, using localStorage:', error);
-      }
-    }
-
-    // Fallback to localStorage
     setProjects(prev => [...prev, newProject]);
     setActiveProject(newProject);
 
@@ -499,42 +415,6 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   };
 
   const updateProject = async (id: string, updates: Partial<Project>) => {
-    // Try to update via API if Supabase is configured
-    if (isSupabaseConfigured && clerkSession?.token) {
-      try {
-        const response = await fetch(`/api/projects/${id}`, {
-          method: 'PUT',
-          headers: {
-            'Authorization': `Bearer ${clerkSession.token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(updates)
-        });
-
-        if (response.ok) {
-          const result = await response.json();
-          const updatedProject = result.project;
-          
-          setProjects(prev =>
-            prev.map(p => {
-              if (p.id !== id) return p;
-              if (activeProject.id === id) {
-                setActiveProject(updatedProject);
-              }
-              return updatedProject;
-            })
-          );
-          
-          return;
-        } else {
-          console.warn('[ProjectContext] Failed to update project via API, using localStorage fallback');
-        }
-      } catch (error) {
-        console.warn('[ProjectContext] Error updating project, using localStorage fallback:', error);
-      }
-    }
-
-    // Fallback to localStorage
     setProjects(prev =>
       prev.map(p => {
         if (p.id !== id) return p;
@@ -553,37 +433,6 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       return;
     }
 
-    // Try to delete via API if Supabase is configured
-    if (isSupabaseConfigured && clerkSession?.token) {
-      try {
-        const response = await fetch(`/api/projects/${id}`, {
-          method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${clerkSession.token}`,
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (response.ok) {
-          const remaining = projects.filter(p => p.id !== id);
-          setProjects(remaining);
-          if (activeProject.id === id) {
-            setActiveProject(remaining[0]);
-          }
-          // Delete issues & sprints belonging to this project
-          setIssues(prev => prev.filter(i => i.projectId !== id));
-          setSprints(prev => prev.filter(s => s.projectId !== id));
-          
-          return;
-        } else {
-          console.warn('[ProjectContext] Failed to delete project via API, using localStorage fallback');
-        }
-      } catch (error) {
-        console.warn('[ProjectContext] Error deleting project, using localStorage fallback:', error);
-      }
-    }
-
-    // Fallback to localStorage
     const remaining = projects.filter(p => p.id !== id);
     setProjects(remaining);
     if (activeProject.id === id) {
@@ -635,54 +484,6 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         : undefined
     };
 
-    // Try to create via API if Supabase is configured
-    if (isSupabaseConfigured && clerkSession?.token) {
-      try {
-        const response = await fetch(`/api/projects/${targetProjectId}/issues`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${clerkSession.token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(newIssue)
-        });
-
-        if (response.ok) {
-          const result = await response.json();
-          const createdIssue = result.issue || newIssue;
-          setIssues(prev => [createdIssue, ...prev]);
-
-          // Add activity stream
-          setRecentActivity(prev => [
-            { text: `${currentUser.name} created ${createdIssue.key}: ${createdIssue.title}`, time: 'Just now', key: createdIssue.key },
-            ...prev.slice(0, 20)
-          ]);
-
-          // In-app notification
-          if (createdIssue.assignee && createdIssue.assignee.email) {
-            setNotifications(prev => [
-              {
-                id: `notif-${Date.now()}`,
-                title: 'New Issue Assigned',
-                message: `${currentUser.name} assigned ${createdIssue.key} to ${createdIssue.assignee?.name}`,
-                timestamp: 'Just now',
-                read: false,
-                type: 'assignment',
-                issueKey: createdIssue.key,
-                author: currentUser
-              },
-              ...prev
-            ]);
-          }
-
-          return createdIssue;
-        }
-      } catch (error) {
-        console.warn('[ProjectContext] Failed to create issue via API, using localStorage:', error);
-      }
-    }
-
-    // Fallback to localStorage
     setIssues(prev => [newIssue, ...prev]);
 
     // Add activity stream
@@ -1035,258 +836,81 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     setColumns(prev => prev.filter(c => c.id !== id));
   };
 
-  const switchUser = (user: User) => {
-    setCurrentUser(user);
-    setRecentActivity(prev => [
-      { text: `Switched active user session to ${user.name} (${user.role})`, time: 'Just now' },
-      ...prev
-    ]);
-  };
-
   const markAllNotificationsRead = () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
   };
 
-  // Project Member Management Functions
+  // Project Member Management Functions (stored with the project in localStorage)
   const inviteMember = async (projectId: string, email: string, role: ProjectRole): Promise<{ success: boolean; error?: string }> => {
-    if (isSupabaseConfigured && clerkSession?.token) {
-      try {
-        const response = await fetch(`/api/projects/${projectId}/invite`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${clerkSession.token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ email, role })
-        });
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return { success: false, error: 'Project not found' };
 
-        if (response.ok) {
-          const result = await response.json();
-          
-          // Handle pending invite (user doesn't exist yet) or immediate member add
-          if (result.pendingInvite) {
-            // User doesn't exist - invitation email sent
-            setRecentActivity(prev => [
-              { text: `${currentUser.name} sent invitation to ${email} (${role})`, time: 'Just now' },
-              ...prev
-            ]);
-            return { success: true };
-          } else if (result.member) {
-            // User exists - added immediately to project
-            setProjects(prev => prev.map(p => {
-              if (p.id === projectId) {
-                return {
-                  ...p,
-                  members: [...(p.members || []), result.member]
-                };
-              }
-              return p;
-            }));
-
-            setRecentActivity(prev => [
-              { text: `${currentUser.name} invited ${email} to project as ${role}`, time: 'Just now' },
-              ...prev
-            ]);
-            return { success: true };
-          }
-          
-          return { success: true };
-        } else {
-          const errorData = await response.json();
-          return { success: false, error: errorData.error || 'Failed to invite member' };
-        }
-      } catch (error) {
-        return { success: false, error: 'Network error while inviting member' };
-      }
+    const wanted = email.trim().toLowerCase();
+    const user = teamMembers.find(u => u.email?.toLowerCase() === wanted);
+    if (!user) {
+      return { success: false, error: 'No known user with that email. People can only be added once they appear in your team list.' };
+    }
+    if ((project.members || []).some(m => m.userId === user.id)) {
+      return { success: false, error: 'User is already a member of this project' };
     }
 
-    // Fallback: localStorage mode doesn't support invitations
-    return { success: false, error: 'Member invitations require Supabase configuration' };
+    const member: ProjectMember = {
+      id: `member-${Date.now()}`,
+      userId: user.id,
+      projectId,
+      user,
+      role,
+      invitedAt: new Date().toISOString()
+    };
+    const withMember = (p: Project): Project => ({ ...p, members: [...(p.members || []), member] });
+    setProjects(prev => prev.map(p => (p.id === projectId ? withMember(p) : p)));
+    if (activeProject.id === projectId) setActiveProject(withMember(activeProject));
+
+    setRecentActivity(prev => [
+      { text: `${currentUser.name} added ${user.name} to the project as ${role}`, time: 'Just now' },
+      ...prev
+    ]);
+    return { success: true };
   };
 
   const removeMember = async (projectId: string, userId: string): Promise<void> => {
-    if (isSupabaseConfigured && clerkSession?.token) {
-      try {
-        const response = await fetch(`/api/projects/${projectId}/members/${userId}`, {
-          method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${clerkSession.token}`,
-            'Content-Type': 'application/json'
-          }
-        });
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return;
 
-        if (response.ok) {
-          setProjects(prev => prev.map(p => {
-            if (p.id === projectId) {
-              return {
-                ...p,
-                members: (p.members || []).filter(m => m.userId !== userId)
-              };
-            }
-            return p;
-          }));
-
-          setRecentActivity(prev => [
-            { text: `${currentUser.name} removed a member from project`, time: 'Just now' },
-            ...prev
-          ]);
-        }
-      } catch (error) {
-        console.warn('[ProjectContext] Failed to remove member:', error);
-      }
+    const target = (project.members || []).find(m => m.userId === userId);
+    const owners = (project.members || []).filter(m => m.role === 'owner');
+    if (target?.role === 'owner' && owners.length <= 1) {
+      alert('Cannot remove the last owner of the project.');
+      return;
     }
+
+    const without = (p: Project): Project => ({ ...p, members: (p.members || []).filter(m => m.userId !== userId) });
+    setProjects(prev => prev.map(p => (p.id === projectId ? without(p) : p)));
+    if (activeProject.id === projectId) setActiveProject(without(activeProject));
+
+    setRecentActivity(prev => [
+      { text: `${currentUser.name} removed a member from project`, time: 'Just now' },
+      ...prev
+    ]);
   };
 
   const updateMemberRole = async (projectId: string, userId: string, newRole: ProjectRole): Promise<void> => {
-    if (isSupabaseConfigured && clerkSession?.token) {
-      try {
-        const response = await fetch(`/api/projects/${projectId}/members/${userId}/role`, {
-          method: 'PATCH',
-          headers: {
-            'Authorization': `Bearer ${clerkSession.token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ role: newRole })
-        });
+    const withRole = (p: Project): Project => ({
+      ...p,
+      members: (p.members || []).map(m => (m.userId === userId ? { ...m, role: newRole } : m))
+    });
+    setProjects(prev => prev.map(p => (p.id === projectId ? withRole(p) : p)));
+    if (activeProject.id === projectId) setActiveProject(withRole(activeProject));
 
-        if (response.ok) {
-          setProjects(prev => prev.map(p => {
-            if (p.id === projectId) {
-              return {
-                ...p,
-                members: (p.members || []).map(m => 
-                  m.userId === userId ? { ...m, role: newRole } : m
-                )
-              };
-            }
-            return p;
-          }));
-
-          setRecentActivity(prev => [
-            { text: `${currentUser.name} updated member role to ${newRole}`, time: 'Just now' },
-            ...prev
-          ]);
-        }
-      } catch (error) {
-        console.warn('[ProjectContext] Failed to update member role:', error);
-      }
-    }
-  };
-
-  // Clerk Auth Actions
-  const clerkSignUp = async (data: {
-    name: string;
-    email: string;
-    password?: string;
-    role?: string;
-    department?: string;
-  }) => {
-    try {
-      const res = await fetch('/api/auth/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      const result = await res.json();
-      if (result.success && result.user && result.session) {
-        setClerkSession(result.session);
-        setCurrentUser(result.user);
-        setTeamMembers(prev => {
-          if (prev.some(u => u.id === result.user.id || u.email === result.user.email)) return prev;
-          return [result.user, ...prev];
-        });
-        setRecentActivity(prev => [
-          { text: `New user verified via Clerk: ${result.user.name} (${result.user.email})`, time: 'Just now' },
-          ...prev
-        ]);
-        return { success: true, user: result.user };
-      }
-      return { success: false, error: result.error || 'Failed to sign up with Clerk.' };
-    } catch {
-      // Local fallback
-      const fallbackUser: User = {
-        id: `user-clerk-${Date.now()}`,
-        name: data.name,
-        email: data.email,
-        avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
-        role: data.role || 'Software Engineer',
-        department: data.department || 'Engineering',
-        status: 'online'
-      };
-      const fallbackSession: ClerkSession = {
-        token: `sess_clerk_${Date.now()}`,
-        userId: fallbackUser.id,
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 86400000 * 7).toISOString()
-      };
-      setClerkSession(fallbackSession);
-      setCurrentUser(fallbackUser);
-      setTeamMembers(prev => [fallbackUser, ...prev]);
-      return { success: true, user: fallbackUser };
-    }
-  };
-
-  const clerkSignIn = async (data: { email: string; password?: string }) => {
-    try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      const result = await res.json();
-      if (result.success && result.user && result.session) {
-        setClerkSession(result.session);
-        setCurrentUser(result.user);
-        setRecentActivity(prev => [
-          { text: `Authenticated session via Clerk: ${result.user.name}`, time: 'Just now' },
-          ...prev
-        ]);
-        return { success: true, user: result.user };
-      }
-      return { success: false, error: result.error || 'Invalid credentials.' };
-    } catch {
-      // Check existing user in directory
-      const found = teamMembers.find(m => m.email.toLowerCase() === data.email.toLowerCase());
-      if (found) {
-        setCurrentUser(found);
-        setClerkSession({
-          token: `sess_clerk_${Date.now()}`,
-          userId: found.id,
-          createdAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + 86400000 * 7).toISOString()
-        });
-        return { success: true, user: found };
-      }
-      return { success: false, error: 'User not found in directory.' };
-    }
-  };
-
-  const clerkSignOut = async () => {
-    if (clerkSession?.token) {
-      try {
-        await fetch('/api/auth/logout', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: clerkSession.token })
-        });
-      } catch {}
-    }
-    
-    // Clear all user-specific data on logout
-    setClerkSession(null);
-    setCurrentUser(teamMembers[0]);
-    setProjects([]);
-    setIssues([]);
-    setSprints([]);
-    setActiveProject(INITIAL_PROJECTS[0]); // Set to placeholder
-    
-    console.log('[ProjectContext] User signed out - cleared all data');
+    setRecentActivity(prev => [
+      { text: `${currentUser.name} updated member role to ${newRole}`, time: 'Just now' },
+      ...prev
+    ]);
   };
 
   return (
     <ProjectContext.Provider
       value={{
-        isSupabaseConfigured,
         projects,
         isLoadingProjects,
         activeProject,
@@ -1324,8 +948,6 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         setIsCreateModalOpen,
         isCreateProjectModalOpen,
         setIsCreateProjectModalOpen,
-        isAuthModalOpen,
-        setIsAuthModalOpen,
         setSelectedIssue,
 
         createProject,
@@ -1345,17 +967,11 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         addColumn,
         updateColumn,
         deleteColumn,
-        switchUser,
         markAllNotificationsRead,
 
         inviteMember,
         removeMember,
-        updateMemberRole,
-
-        clerkSession,
-        clerkSignUp,
-        clerkSignIn,
-        clerkSignOut
+        updateMemberRole
       }}
     >
       {children}

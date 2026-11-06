@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+@theme {
+  --font-display: 'Fraunces Variable', Georgia, 'Times New Roman', serif;
+}
+
 @layer base {
   * {
     border-color: rgb(226 232 240 / 0.8);

@@ -57,43 +57,14 @@ export const IssueDetailModal: React.FC = () => {
   const [isEditingDesc, setIsEditingDesc] = useState(false);
   const [descValue, setDescValue] = useState(selectedIssue.description);
   const [mentionPickerOpen, setMentionPickerOpen] = useState(false);
-  const [attachments, setAttachments] = useState(selectedIssue.attachments || []);
+  // Attachments are stored on the issue itself (browser localStorage), so there is no upload API.
+  const attachments = selectedIssue.attachments || [];
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
 
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Attachment handlers
-  const fetchAttachments = async () => {
-    if (!issueProject || !selectedIssue) return;
-    
-    try {
-      const response = await fetch(
-        `/api/projects/${issueProject.id}/issues/${selectedIssue.id}/attachments`,
-        {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('clerk_session_token') || 'sess_clerk_live_alex_rivera'}`
-          }
-        }
-      );
-      
-      if (response.ok) {
-        const data = await response.json();
-        setAttachments(data.attachments || []);
-      }
-    } catch (error) {
-      console.error('Error fetching attachments:', error);
-    }
-  };
-
-  // Fetch attachments when modal opens or issue changes
-  useEffect(() => {
-    if (selectedIssue) {
-      fetchAttachments();
-    }
-  }, [selectedIssue.id]);
 
   const handleTitleBlur = () => {
     if (!canEdit) return;
@@ -162,16 +133,24 @@ export const IssueDetailModal: React.FC = () => {
     }
   };
 
+  const readAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error || new Error('Could not read file'));
+      reader.readAsDataURL(file);
+    });
+
   const uploadFile = async (file: File) => {
     if (!canEdit) {
       alert('You do not have permission to upload attachments');
       return;
     }
 
-    // Validate file size (10 MB for Supabase, 1 MB for localStorage)
-    const maxSize = 10 * 1024 * 1024; // 10 MB
+    // Files are kept in the browser's localStorage, which is small, so the limit is low.
+    const maxSize = 1024 * 1024; // 1 MB
     if (file.size > maxSize) {
-      alert(`File "${file.name}" is too large. Maximum size is 10 MB.`);
+      alert(`File "${file.name}" is too large. Maximum size is 1 MB.`);
       return;
     }
 
@@ -179,27 +158,17 @@ export const IssueDetailModal: React.FC = () => {
     setUploadProgress(0);
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await fetch(
-        `/api/projects/${issueProject.id}/issues/${selectedIssue.id}/attachments`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('clerk_session_token') || 'sess_clerk_live_alex_rivera'}`
-          },
-          body: formData
-        }
-      );
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Upload failed');
-      }
-
-      // Refresh attachments list
-      await fetchAttachments();
+      const url = await readAsDataUrl(file);
+      const attachment = {
+        id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        filename: file.name,
+        size: file.size,
+        mimeType: file.type || 'application/octet-stream',
+        url,
+        uploadedBy: currentUser,
+        uploadedAt: new Date().toISOString()
+      };
+      updateIssue(selectedIssue.id, { attachments: [attachment, ...attachments] });
       setUploadProgress(100);
     } catch (error: any) {
       console.error('Upload error:', error);
@@ -210,31 +179,9 @@ export const IssueDetailModal: React.FC = () => {
     }
   };
 
-  const handleDeleteAttachment = async (attachmentId: string) => {
+  const handleDeleteAttachment = (attachmentId: string) => {
     if (!confirm('Are you sure you want to delete this attachment?')) return;
-
-    try {
-      const response = await fetch(
-        `/api/projects/${issueProject.id}/issues/${selectedIssue.id}/attachments/${attachmentId}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('clerk_session_token') || 'sess_clerk_live_alex_rivera'}`
-          }
-        }
-      );
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Delete failed');
-      }
-
-      // Refresh attachments list
-      await fetchAttachments();
-    } catch (error: any) {
-      console.error('Delete error:', error);
-      alert(error.message || 'Failed to delete attachment');
-    }
+    updateIssue(selectedIssue.id, { attachments: attachments.filter(a => a.id !== attachmentId) });
   };
 
   const getFileIcon = (mimeType: string, filename: string) => {
@@ -677,7 +624,7 @@ export const IssueDetailModal: React.FC = () => {
                         <textarea
                           ref={commentInputRef}
                           rows={2}
-                          placeholder="Write a comment... Type '@' to mention team members and trigger automated Nodemailer alerts..."
+                          placeholder="Write a comment... Type '@' to mention team members and get an in-app notification..."
                           value={commentText}
                           onChange={e => {
                             setCommentText(e.target.value);

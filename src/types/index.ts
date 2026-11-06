@@ -123,16 +123,9 @@ export interface AppNotification {
   message: string;
   timestamp: string;
   read: boolean;
-  type: 'assignment' | 'mention' | 'priority' | 'sprint' | 'status';
+  type: 'assignment' | 'mention' | 'priority' | 'sprint' | 'status' | 'warning';
   issueKey?: string;
   author?: User;
-}
-
-export interface ClerkSession {
-  token: string;
-  userId: string;
-  createdAt: string;
-  expiresAt: string;
 }
 
 export type ViewTab =

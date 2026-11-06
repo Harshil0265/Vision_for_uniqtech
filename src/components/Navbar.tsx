@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useProject } from '../context/ProjectContext';
-import { UserButton, useUser } from '@clerk/clerk-react';
+import { AccountMenu } from './AccountMenu';
 import { VisionLogo } from './VisionLogo';
 import { getUserRoleInProject, canEditIssue } from '../utils/permissions';
 import {
@@ -30,7 +30,6 @@ export const Navbar: React.FC = () => {
     lastSyncTime,
     setIsCreateModalOpen,
     setIsCreateProjectModalOpen,
-    setIsAuthModalOpen,
     searchQuery,
     setSearchQuery,
     setSelectedIssue,
@@ -38,7 +37,6 @@ export const Navbar: React.FC = () => {
     setActiveTab
   } = useProject();
 
-  const { isSignedIn } = useUser();
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
 
@@ -219,9 +217,9 @@ export const Navbar: React.FC = () => {
           <span className="font-medium">New Project</span>
         </button>
 
-        {/* Real-Time Supabase Sync Status Indicator */}
+        {/* Local sync status indicator */}
         <div
-          title={`Supabase Realtime Channel: Synced at ${lastSyncTime.toLocaleTimeString()}`}
+          title={`Workspace saved locally at ${lastSyncTime.toLocaleTimeString()}`}
           className="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded-md bg-emerald-50/80 border border-emerald-200/80 text-[11px] text-emerald-800"
         >
           <span className="relative flex h-2 w-2">
@@ -237,7 +235,7 @@ export const Navbar: React.FC = () => {
             />
           </span>
           <span className="font-mono text-emerald-700 font-medium">
-            {realtimeStatus === 'connected' ? 'Supabase Live' : 'Syncing...'}
+            {realtimeStatus === 'connected' ? 'Saved locally' : 'Syncing...'}
           </span>
         </div>
 
@@ -316,20 +314,8 @@ export const Navbar: React.FC = () => {
           )}
         </div>
 
-        {/* Clerk Auth Profile & Switcher Button */}
-        <div className="flex items-center gap-2">
-          <UserButton afterSignOutUrl="/" showName={false} />
-          {/* Only show persona switcher in development/demo mode when NOT signed in via Clerk */}
-          {!isSignedIn && (
-            <button
-              onClick={() => setIsAuthModalOpen(true)}
-              className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-slate-100 border border-transparent hover:border-slate-200 transition-all text-left cursor-pointer"
-              title="Switch Team Persona (Demo)"
-            >
-              <span className="text-[10px] text-slate-600 font-mono font-medium">Switch Persona</span>
-            </button>
-          )}
-        </div>
+        {/* Account: profile, active sessions, password, sign out */}
+        <AccountMenu />
       </div>
     </header>
   );

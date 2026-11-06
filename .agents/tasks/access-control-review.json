@@ -1,0 +1,16 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {
+      "id": "FINDING-001",
+      "severity": "HIGH",
+      "title": "Missing 403 Error Handling for Access Revocation",
+      "location": "src/context/ProjectContext.tsx:597-715 (createIssue function)",
+      "description": "When a user's project access is revoked mid-session, subsequent API calls receive 403 responses but the frontend has no handler to detect this, remove the inaccessible project from state, or show a user-friendly error message. Instead, it silently falls back to localStorage, creating phantom data that appears to succeed but disappears on page refresh.",
+      "triggeringPath": "User A is viewing Project X → Admin removes User A from Project X → User A creates an issue → Backend returns 403 (server.ts:1143) → Frontend catches error, logs warning, falls back to localStorage → Issue appears in UI but doesn't exist on server → On refresh, issue disappears",
+      "consequence": "Users create issues/sprints that appear to succeed but are silently lost. No notification of access revocation. Confusing experience where data disappears after refresh.",
+      "correction": "Add explicit 403 status code handling in createIssue and other API mutation functions. When 403 is received: (1) Remove the inaccessible project from projects state, (2) Redirect to another accessible project or empty state, (3) Show a notification: 'You no longer have access to this project', (4) Do NOT fall back to localStorage on 403 errors. Apply this pattern to createIssue (line 645), updateIssue, createSprint, startSprint, completeSprint, and all other mutation operations that call the API."
+    }
+  ],
+  "reviewDoc": "h:\\vision for uniqtech\\.agents\\tasks\\access-control-review.md"
+}

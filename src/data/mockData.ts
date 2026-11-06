@@ -191,7 +191,7 @@ export const INITIAL_SPRINTS: Sprint[] = [
     id: 'sprint-25',
     projectId: 'proj-op',
     name: 'Sprint 25: Nodemailer Automation & Webhooks',
-    goal: 'Integrate automated notification delivery rules, SMTP fallback queues, and Clerk SSO directory synchronization.',
+    goal: 'Integrate automated notification delivery rules, SMTP fallback queues, and SSO directory synchronization.',
     startDate: '2026-10-16',
     endDate: '2026-10-30',
     status: 'planned',
@@ -326,7 +326,7 @@ export const INITIAL_ISSUES: Issue[] = [
     id: 'issue-103',
     key: 'OP-103',
     projectId: 'proj-op',
-    title: 'Clerk Authentication and Multi-Role RBAC Profile Synchronizer',
+    title: 'JWT Authentication and Multi-Role RBAC Profile Synchronizer',
     description: 'Integrate user session tokens, JWT claims validation, role assignments (Admin, Tech Lead, Contributor, Viewer), and user switching.',
     type: 'story',
     priority: 'high',
@@ -335,10 +335,10 @@ export const INITIAL_ISSUES: Issue[] = [
     reporter: TEAM_MEMBERS[0], // Sarah Jenkins
     sprintId: 'sprint-24',
     storyPoints: 8,
-    labels: ['security', 'authentication', 'clerk', 'rbac'],
+    labels: ['security', 'authentication', 'jwt', 'rbac'],
     subtasks: [
-      { id: 'st-31', title: 'Implement Clerk JWT claim verification middleware', completed: true },
-      { id: 'st-32', title: 'Map Clerk metadata roles to internal project permissions', completed: true },
+      { id: 'st-31', title: 'Implement JWT claim verification middleware', completed: true },
+      { id: 'st-32', title: 'Map token claims to internal project permissions', completed: true },
       { id: 'st-33', title: 'Add session expiration graceful modal refresher', completed: true }
     ],
     comments: [

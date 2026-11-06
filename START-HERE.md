@@ -21,7 +21,7 @@ http://localhost:5173
 
 ---
 
-## If you get network errors when inviting members:
+## If you get network errors when signing in:
 
 1. Check the terminal - both **[VITE]** and **[API]** should be running
 2. If only [VITE] is running, stop it (Ctrl+C) and run `npm run dev` again

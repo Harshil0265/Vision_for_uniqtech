@@ -1,6 +1,5 @@
 {
   "name": "OmniPlane | Enterprise Project & Sprint Management",
-  "description": "Enterprise-grade project management engine combining the best of Jira and Azure DevOps: customizable Kanban workflows, sprint backlogs, task assignments, member tagging, real-time collaboration, analytics dashboard, and automated email alerts.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "description": "Enterprise-grade project management engine combining the best of Jira and Azure DevOps: customizable Kanban workflows, sprint backlogs, task assignments, member tagging, analytics dashboard, and project-based access control.",
+  "requestFramePermissions": []
 }

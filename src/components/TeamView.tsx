@@ -3,7 +3,7 @@ import { useProject } from '../context/ProjectContext';
 import { ShieldCheck } from 'lucide-react';
 
 export const TeamView: React.FC = () => {
-  const { teamMembers, issues, switchUser, currentUser } = useProject();
+  const { teamMembers, issues, currentUser } = useProject();
 
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-50/50 overflow-y-auto p-6 space-y-6">
@@ -79,20 +79,13 @@ export const TeamView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Actions */}
-              <div className="flex items-center gap-2 pt-2">
-                <button
-                  onClick={() => switchUser(member)}
-                  disabled={isCurrent}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                    isCurrent
-                      ? 'bg-slate-100 text-slate-400 cursor-default'
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                  }`}
-                >
-                  {isCurrent ? 'Current Session' : 'Switch to User (Clerk)'}
-                </button>
-              </div>
+              {isCurrent && (
+                <div className="pt-2">
+                  <div className="w-full py-1.5 rounded-lg text-xs font-medium text-center bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    You
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
