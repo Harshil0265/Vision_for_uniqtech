@@ -5,7 +5,6 @@
 
 import React from 'react';
 import { ProjectProvider, useProject } from './context/ProjectContext';
-import { AuthWrapper } from './components/AuthWrapper';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { KanbanBoard } from './components/KanbanBoard';
@@ -16,7 +15,6 @@ import { TeamView } from './components/TeamView';
 import { IssueDetailModal } from './components/IssueDetailModal';
 import { CreateIssueModal } from './components/CreateIssueModal';
 import { CreateProjectModal } from './components/CreateProjectModal';
-import { ClerkAuthModal } from './components/ClerkAuthModal';
 import { Activity, ShieldCheck } from 'lucide-react';
 
 const AppContent: React.FC = () => {
@@ -65,7 +63,7 @@ const AppContent: React.FC = () => {
               }`}
             />
             <span className="font-mono text-[10px] text-slate-500 font-medium">
-              Supabase Realtime [{activeProject.key}:broadcast-channel]
+              .NET Backend [{activeProject.key}:api-connected]
             </span>
           </div>
 
@@ -86,7 +84,7 @@ const AppContent: React.FC = () => {
         <div className="hidden md:flex items-center gap-4 shrink-0 font-mono text-[10px] text-slate-500">
           <span className="flex items-center gap-1 font-medium">
             <ShieldCheck className="w-3 h-3 text-emerald-600" />
-            <span>Clerk RBAC: Active</span>
+            <span>JWT Auth: Active</span>
           </span>
         </div>
       </footer>
@@ -95,7 +93,6 @@ const AppContent: React.FC = () => {
       <IssueDetailModal />
       <CreateIssueModal />
       <CreateProjectModal />
-      <ClerkAuthModal />
     </div>
   );
 };
@@ -103,9 +100,7 @@ const AppContent: React.FC = () => {
 export default function App() {
   return (
     <ProjectProvider>
-      <AuthWrapper>
-        <AppContent />
-      </AuthWrapper>
+      <AppContent />
     </ProjectProvider>
   );
 }
