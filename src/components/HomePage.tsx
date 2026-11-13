@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { SignUpButton, SignInButton } from '@clerk/clerk-react';
+// Clerk removed - using regular buttons
 import { VisionLogo } from './VisionLogo';
 import {
   Layers,
@@ -40,17 +40,9 @@ export const HomePage: React.FC = () => {
 
           {/* CTA Buttons */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
-            <SignUpButton mode="modal">
-              <button className="px-8 py-4 bg-white text-blue-600 rounded-xl font-bold text-lg shadow-xl hover:shadow-2xl hover:scale-105 transition-all duration-200 cursor-pointer">
-                Get Started Free
-              </button>
-            </SignUpButton>
+            <button className="px-8 py-4 bg-white text-blue-600 rounded-xl font-bold text-lg shadow-xl hover:shadow-2xl hover:scale-105 transition-all duration-200 cursor-pointer">Get Started Free</button>
 
-            <SignInButton mode="modal">
-              <button className="px-8 py-4 bg-blue-700/50 backdrop-blur-sm text-white rounded-xl font-semibold text-lg border-2 border-white/30 hover:bg-blue-700/70 hover:border-white/50 transition-all duration-200 cursor-pointer">
-                Sign In
-              </button>
-            </SignInButton>
+            <button className="px-8 py-4 bg-blue-700/50 backdrop-blur-sm text-white rounded-xl font-semibold text-lg border-2 border-white/30 hover:bg-blue-700/70 hover:border-white/50 transition-all duration-200 cursor-pointer">Sign In</button>
           </div>
         </div>
       </div>
@@ -148,3 +140,5 @@ export const HomePage: React.FC = () => {
     </div>
   );
 };
+
+
