@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { WorkItemIcon, PriorityIcon } from './WorkItemIcon';
-import { Priority } from '../types';
+import { Issue, Priority } from '../types';
 import {
   X,
   Trash2,
@@ -13,8 +13,14 @@ import {
 } from 'lucide-react';
 
 export const IssueDetailModal: React.FC = () => {
+  const { selectedIssue } = useProject();
+  if (!selectedIssue) return null;
+  // key: switching to another work item starts with fresh local state (title/description drafts).
+  return <IssueDetailContent key={selectedIssue.id} selectedIssue={selectedIssue} />;
+};
+
+const IssueDetailContent: React.FC<{ selectedIssue: Issue }> = ({ selectedIssue }) => {
   const {
-    selectedIssue,
     setSelectedIssue,
     columns,
     projects,
@@ -26,13 +32,17 @@ export const IssueDetailModal: React.FC = () => {
     moveIssueStatus,
     toggleSubtask,
     addSubtask,
-    addComment
+    addComment,
+    getProjectMembers
   } = useProject();
-
-  if (!selectedIssue) return null;
 
   const issueProject = projects.find(p => p.id === selectedIssue.projectId) || activeProject;
   const allowedTypes = issueProject.allowedIssueTypes || ['epic', 'story', 'task', 'bug'];
+  const assignableUsers = (() => {
+    const list = getProjectMembers(issueProject).filter(m => m.member.role !== 'viewer').map(m => m.user);
+    const current = selectedIssue.assignee;
+    return current && !list.some(u => u.id === current.id) ? [current, ...list] : list;
+  })();
 
   const [activeTab, setActiveTab] = useState<'comments' | 'history'>('comments');
   const [commentText, setCommentText] = useState('');
@@ -327,7 +337,7 @@ export const IssueDetailModal: React.FC = () => {
                       <textarea
                         ref={commentInputRef}
                         rows={2}
-                        placeholder="Write a comment... Type '@' to mention team members and trigger automated Nodemailer alerts..."
+                        placeholder="Write a comment... Type '@' to mention a teammate and notify them..."
                         value={commentText}
                         onChange={e => {
                           setCommentText(e.target.value);
@@ -459,18 +469,43 @@ export const IssueDetailModal: React.FC = () => {
                 value={selectedIssue.assignee?.id || 'unassigned'}
                 onChange={e => {
                   const val = e.target.value;
-                  const newAssignee = val === 'unassigned' ? null : teamMembers.find(m => m.id === val) || null;
+                  const newAssignee = val === 'unassigned' ? null : assignableUsers.find(m => m.id === val) || null;
                   updateIssue(selectedIssue.id, { assignee: newAssignee });
                 }}
                 className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs cursor-pointer font-medium"
               >
                 <option value="unassigned">Unassigned</option>
-                {teamMembers.map(m => (
+                {assignableUsers.map(m => (
                   <option key={m.id} value={m.id}>
                     {m.name} ({m.role})
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Due date */}
+            <div className="space-y-1.5">
+              <label htmlFor="issue-due-date" className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                Due date
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="issue-due-date"
+                  type="date"
+                  value={selectedIssue.dueDate?.slice(0, 10) ?? ''}
+                  onChange={e => updateIssue(selectedIssue.id, { dueDate: e.target.value || undefined })}
+                  className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
+                />
+                {selectedIssue.dueDate && (
+                  <button
+                    type="button"
+                    onClick={() => updateIssue(selectedIssue.id, { dueDate: undefined })}
+                    className="text-[11px] text-slate-500 hover:text-slate-800 cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Priority */}

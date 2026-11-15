@@ -4,12 +4,15 @@ interface VisionLogoProps {
   className?: string;
   size?: 'sm' | 'md' | 'lg';
   showSubtitle?: boolean;
+  /** 'light' renders the wordmark in white for dark backgrounds. */
+  tone?: 'dark' | 'light';
 }
 
 export const VisionLogo: React.FC<VisionLogoProps> = ({
   className = '',
   size = 'md',
-  showSubtitle = true
+  showSubtitle = true,
+  tone = 'dark'
 }) => {
   const iconSizes = {
     sm: 'w-6 h-6',
@@ -55,14 +58,14 @@ export const VisionLogo: React.FC<VisionLogoProps> = ({
       <div className="flex flex-col justify-center leading-none">
         <div className="flex items-center gap-1.5">
           <span
-            className={`font-black tracking-[0.2em] uppercase text-slate-900 ${textSizes[size]} font-sans`}
+            className={`font-black tracking-[0.2em] uppercase ${tone === 'light' ? 'text-white' : 'text-slate-900'} ${textSizes[size]} font-sans`}
           >
             VISION
           </span>
           <span className="w-1.5 h-1.5 rounded-full bg-blue-600 shrink-0" />
         </div>
         {showSubtitle && (
-          <span className="text-[9px] font-mono tracking-widest text-slate-600 uppercase font-medium mt-0.5">
+          <span className={`text-[9px] font-mono tracking-widest ${tone === 'light' ? 'text-slate-300' : 'text-slate-600'} uppercase font-medium mt-0.5`}>
             ENTERPRISE SUITE
           </span>
         )}

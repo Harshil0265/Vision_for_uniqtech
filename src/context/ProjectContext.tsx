@@ -1,5 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode, useMemo } from 'react';
 import confetti from 'canvas-confetti';
+import { useAuth } from './AuthContext';
+import { withAvatar } from '../lib/avatar';
 import {
   Issue,
   KanbanColumn,
@@ -11,7 +13,8 @@ import {
   WorkItemType,
   Priority,
   Project,
-  ClerkSession
+  ProjectMember,
+  ProjectRole
 } from '../types';
 import {
   TEAM_MEMBERS,
@@ -62,8 +65,9 @@ interface ProjectContextType {
   setIsCreateModalOpen: (open: boolean) => void;
   isCreateProjectModalOpen: boolean;
   setIsCreateProjectModalOpen: (open: boolean) => void;
-  isAuthModalOpen: boolean;
-  setIsAuthModalOpen: (open: boolean) => void;
+  /** Project whose settings are open in the project form (null = closed / creating a new one). */
+  editingProjectId: string | null;
+  openProjectSettings: (projectId: string | null) => void;
   setSelectedIssue: (issue: Issue | null) => void;
 
   // Actions
@@ -84,80 +88,70 @@ interface ProjectContextType {
   addColumn: (name: string, wipLimit: number, color: string, category?: 'todo' | 'in_progress' | 'done') => void;
   updateColumn: (id: string, updates: Partial<KanbanColumn>) => void;
   deleteColumn: (id: string) => void;
-  switchUser: (user: User) => void;
   markAllNotificationsRead: () => void;
 
-  // Clerk Auth Integration
-  clerkSession: ClerkSession | null;
-  clerkSignUp: (data: { name: string; email: string; password?: string; role?: string; department?: string }) => Promise<{ success: boolean; user?: User; error?: string }>;
-  clerkSignIn: (data: { email: string; password?: string }) => Promise<{ success: boolean; user?: User; error?: string }>;
-  clerkSignOut: () => Promise<void>;
+  // Project members (assigning people to a project)
+  getProjectMembers: (project: Project) => { member: ProjectMember; user: User }[];
+  myRoleIn: (project: Project) => ProjectRole | null;
+  /** `people` helps name users added in the same step they were invited (state not updated yet). */
+  addProjectMembers: (projectId: string, userIds: string[], role: ProjectRole, people?: User[]) => void;
+  updateProjectMemberRole: (projectId: string, userId: string, role: ProjectRole) => ActionResult;
+  removeProjectMember: (projectId: string, userId: string) => ActionResult;
+  isProjectKeyTaken: (key: string, exceptProjectId?: string) => boolean;
+
+  // Workspace people
+  inviteTeamMember: (data: { name: string; email: string; role: string; department: string }) => { ok: true; user: User } | { ok: false; error: string };
 }
+
+export type ActionResult = { ok: true } | { ok: false; error: string };
+
+/** Reads saved state, falling back to the older 'omniplane_*' keys, then to the demo data. */
+function loadSaved<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(`vision_${key}`) ?? localStorage.getItem(`omniplane_${key}`);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+const ROLE_RANK: Record<ProjectRole, number> = { viewer: 0, member: 1, admin: 2, owner: 3 };
+export const canManageProject = (role: ProjectRole | null) => !!role && ROLE_RANK[role] >= ROLE_RANK.admin;
+export const canEditWork = (role: ProjectRole | null) => !!role && ROLE_RANK[role] >= ROLE_RANK.member;
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
+// The mock API's seeded demo accounts correspond to people in the demo workspace data.
+// Linking them keeps the issues, comments and notifications that belong to those people.
+const SEEDED_ACCOUNT_TO_TEAM_MEMBER: Record<string, string> = {
+  '00000000-0000-0000-0000-000000000001': 'user-1', // Sarah Jenkins
+  '00000000-0000-0000-0000-000000000002': 'user-2' // Alex Rivera
+};
+
 export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const { user: authUser } = useAuth();
+
   // Projects
-  const [projects, setProjects] = useState<Project[]>(() => {
-    const saved = localStorage.getItem('omniplane_projects');
-    return saved ? JSON.parse(saved) : INITIAL_PROJECTS;
-  });
+  // Workspace data is kept in this browser (localStorage) until the backend exposes the data endpoints
+  // described in docs/API_CONTRACT.md.
+  const [projects, setProjects] = useState<Project[]>(() => loadSaved('projects', INITIAL_PROJECTS));
 
   const [activeProject, setActiveProject] = useState<Project>(() => {
-    const saved = localStorage.getItem('omniplane_active_project_id');
-    if (saved) {
-      const found = projects.find(p => p.id === saved);
-      if (found) return found;
-    }
-    return projects[0] || INITIAL_PROJECTS[0];
+    const savedId = localStorage.getItem('vision_active_project_id') ?? localStorage.getItem('omniplane_active_project_id');
+    return projects.find(p => p.id === savedId) || projects[0] || INITIAL_PROJECTS[0];
   });
 
-  // Load saved state or default
-  const [issues, setIssues] = useState<Issue[]>(() => {
-    const saved = localStorage.getItem('omniplane_issues');
-    return saved ? JSON.parse(saved) : INITIAL_ISSUES;
-  });
-
-  const [columns, setColumns] = useState<KanbanColumn[]>(() => {
-    const saved = localStorage.getItem('omniplane_columns');
-    return saved ? JSON.parse(saved) : INITIAL_COLUMNS;
-  });
-
-  const [sprints, setSprints] = useState<Sprint[]>(() => {
-    const saved = localStorage.getItem('omniplane_sprints');
-    return saved ? JSON.parse(saved) : INITIAL_SPRINTS;
-  });
-
-  const [teamMembers, setTeamMembers] = useState<User[]>(() => {
-    const saved = localStorage.getItem('vision_team_members') || localStorage.getItem('omniplane_team_members');
-    return saved ? JSON.parse(saved) : TEAM_MEMBERS;
-  });
-
-  const [currentUser, setCurrentUser] = useState<User>(() => {
-    const saved = localStorage.getItem('vision_current_user') || localStorage.getItem('omniplane_current_user');
-    return saved ? JSON.parse(saved) : TEAM_MEMBERS[1]; // Alex Rivera by default
-  });
-
-  const [clerkSession, setClerkSession] = useState<ClerkSession | null>(() => {
-    const saved = localStorage.getItem('vision_clerk_session');
-    if (saved) return JSON.parse(saved);
-    return {
-      token: 'sess_clerk_live_alex_rivera',
-      userId: 'user-2',
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 86400000 * 7).toISOString()
-    };
-  });
-
-  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
-    const saved = localStorage.getItem('vision_notifications') || localStorage.getItem('omniplane_notifications');
-    return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
-  });
+  const [issues, setIssues] = useState<Issue[]>(() => loadSaved('issues', INITIAL_ISSUES));
+  const [columns, setColumns] = useState<KanbanColumn[]>(() => loadSaved('columns', INITIAL_COLUMNS));
+  const [sprints, setSprints] = useState<Sprint[]>(() => loadSaved('sprints', INITIAL_SPRINTS));
+  const [teamMembers, setTeamMembers] = useState<User[]>(() => loadSaved('team_members', TEAM_MEMBERS));
+  const [currentUser, setCurrentUser] = useState<User>(() => loadSaved('current_user', TEAM_MEMBERS[1]));
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => loadSaved('notifications', INITIAL_NOTIFICATIONS));
 
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
 
   // Filters & Tabs
-  const [activeTab, setActiveTab] = useState<ViewTab>('board');
+  const [activeTab, setActiveTab] = useState<ViewTab>('dashboard');
   const [swimlane, setSwimlane] = useState<SwimlaneType>('none');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterAssignee, setFilterAssignee] = useState<string>('all');
@@ -168,13 +162,13 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
 
   // Realtime simulation state
   const [realtimeStatus, setRealtimeStatus] = useState<'connected' | 'syncing'>('connected');
   const [lastSyncTime, setLastSyncTime] = useState<Date>(new Date());
   const [recentActivity, setRecentActivity] = useState<{ text: string; time: string; key?: string }[]>([
-    { text: 'Live Realtime Channel [vision-sync:v2] established via Supabase WebSockets', time: 'Just now' },
+    { text: 'Workspace loaded from local browser storage', time: 'Just now' },
     { text: 'Sprint 24 active with 34 committed story points in Vision', time: '5m ago' }
   ]);
 
@@ -186,6 +180,16 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   useEffect(() => {
     localStorage.setItem('vision_active_project_id', activeProject.id);
   }, [activeProject]);
+
+  // If the active project was edited or deleted, follow the stored copy.
+  useEffect(() => {
+    const fresh = projects.find(p => p.id === activeProject.id);
+    if (!fresh) {
+      if (projects[0]) setActiveProject(projects[0]);
+    } else if (fresh !== activeProject) {
+      setActiveProject(fresh);
+    }
+  }, [projects]);
 
   useEffect(() => {
     localStorage.setItem('vision_issues', JSON.stringify(issues));
@@ -207,13 +211,49 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     localStorage.setItem('vision_current_user', JSON.stringify(currentUser));
   }, [currentUser]);
 
+  // A different account signing in (or signing out) starts from a clean view, not the last user's screen.
+  const viewOwner = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    if (clerkSession) {
-      localStorage.setItem('vision_clerk_session', JSON.stringify(clerkSession));
-    } else {
-      localStorage.removeItem('vision_clerk_session');
+    const id = authUser?.id ?? null;
+    if (viewOwner.current !== undefined && viewOwner.current !== id) {
+      setActiveTab('dashboard');
+      setSelectedIssue(null);
+      setIsCreateModalOpen(false);
+      setIsCreateProjectModalOpen(false);
+      setEditingProjectId(null);
+      setSearchQuery('');
+      setFilterAssignee('all');
+      setFilterPriority('all');
+      setFilterType('all');
+      setFilterOnlyMyIssues(false);
     }
-  }, [clerkSession]);
+    viewOwner.current = id;
+  }, [authUser?.id]);
+
+  // The signed-in account is the current user.
+  useEffect(() => {
+    if (!authUser) return;
+    const linkedId = SEEDED_ACCOUNT_TO_TEAM_MEMBER[authUser.id];
+    const linked = linkedId ? TEAM_MEMBERS.find(m => m.id === linkedId) : undefined;
+    const profile = { name: authUser.name, email: authUser.email, role: authUser.role, department: authUser.department };
+    // Seeded demo accounts keep their workspace identity (id, photo); everyone else is used as-is.
+    const me: User = withAvatar(linked ? { ...linked, ...profile, status: 'online' } : { ...authUser, status: 'online' });
+    setCurrentUser(me);
+
+    // Someone invited by email who now signs in with that address takes over the invitation:
+    // their project memberships and assigned work move to the real account.
+    const invited = teamMembers.find(u => u.status === 'invited' && u.id !== me.id && u.email.toLowerCase() === me.email.toLowerCase());
+    if (invited) {
+      setProjects(ps => ps.map(p => (p.members?.some(m => m.userId === invited.id)
+        ? { ...p, members: p.members.map(m => (m.userId === invited.id ? { ...m, userId: me.id } : m)) }
+        : p)));
+      setIssues(is => is.map(i => (i.assignee?.id === invited.id ? { ...i, assignee: me } : i)));
+    }
+    setTeamMembers(prev => {
+      const base = invited ? prev.filter(u => u.id !== invited.id) : prev;
+      return base.some(u => u.id === me.id) ? base.map(u => (u.id === me.id ? { ...u, ...me } : u)) : [me, ...base];
+    });
+  }, [authUser]);
 
   useEffect(() => {
     localStorage.setItem('vision_notifications', JSON.stringify(notifications));
@@ -229,7 +269,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
   }, [issues]);
 
-  // Periodic heartbeat / Supabase live pulse simulation
+  // Periodic heartbeat (sync status indicator)
   useEffect(() => {
     const interval = setInterval(() => {
       setRealtimeStatus('syncing');
@@ -257,6 +297,13 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     setFilterOnlyMyIssues(false);
   };
 
+  const initialMembers = (lead: User): ProjectMember[] => {
+    const now = new Date().toISOString();
+    const list: ProjectMember[] = [{ userId: lead.id, role: 'owner', addedAt: now }];
+    if (lead.id !== currentUser.id) list.push({ userId: currentUser.id, role: 'admin', addedAt: now });
+    return list;
+  };
+
   const createProject = (data: Partial<Project>): Project => {
     const key = (data.key || 'PROJ').toUpperCase().trim();
     const newProject: Project = {
@@ -271,7 +318,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         : ['epic', 'story', 'task', 'bug'],
       defaultAssignee: data.defaultAssignee || 'unassigned',
       iconGradient: data.iconGradient || 'from-blue-600 via-indigo-600 to-sky-500',
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      members: data.members && data.members.length > 0 ? data.members : initialMembers(data.lead || currentUser)
     };
 
     setProjects(prev => [...prev, newProject]);
@@ -333,9 +381,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     const targetProjectId = issueData.projectId || activeProject.id;
     const targetProject = projects.find(p => p.id === targetProjectId) || activeProject;
 
-    const projectIssues = issues.filter(i => i.projectId === targetProjectId);
-    const nextNum = projectIssues.length + 101;
-    const key = `${targetProject.key}-${nextNum}`;
+    const highest = issues
+      .filter(i => i.projectId === targetProjectId)
+      .reduce((max, i) => Math.max(max, Number(i.key.split('-').pop()) || 0), 100);
+    const key = `${targetProject.key}-${highest + 1}`;
 
     const newIssue: Issue = {
       id: `issue-${Date.now()}`,
@@ -349,8 +398,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       assignee: issueData.assignee || (targetProject.defaultAssignee === 'lead' ? targetProject.lead : null),
       reporter: currentUser,
       sprintId: issueData.sprintId !== undefined ? issueData.sprintId : (activeSprint ? activeSprint.id : 'backlog'),
-      storyPoints: issueData.storyPoints || 3,
-      labels: issueData.labels || ['feature'],
+      storyPoints: issueData.storyPoints ?? 3,
+      labels: issueData.labels || [],
       subtasks: issueData.subtasks || [],
       comments: [],
       activities: [
@@ -713,118 +762,124 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     setColumns(prev => prev.filter(c => c.id !== id));
   };
 
-  const switchUser = (user: User) => {
-    setCurrentUser(user);
+  // ---- Project members -------------------------------------------------------
+
+  /** Members of a project. Projects saved before membership existed get lead = owner, people with work = member. */
+  const membersOf = (project: Project): ProjectMember[] => {
+    if (project.members && project.members.length > 0) return project.members;
+    const derived = new Map<string, ProjectMember>();
+    derived.set(project.lead.id, { userId: project.lead.id, role: 'owner', addedAt: project.createdAt });
+    issues.filter(i => i.projectId === project.id).forEach(i => {
+      [i.assignee, i.reporter].forEach(u => {
+        if (u && !derived.has(u.id)) derived.set(u.id, { userId: u.id, role: 'member', addedAt: project.createdAt });
+      });
+    });
+    return [...derived.values()];
+  };
+
+  const getProjectMembers = (project: Project) =>
+    membersOf(project)
+      .map(member => ({ member, user: teamMembers.find(u => u.id === member.userId) }))
+      .filter((m): m is { member: ProjectMember; user: User } => !!m.user)
+      .sort((a, b) => ROLE_RANK[b.member.role] - ROLE_RANK[a.member.role] || a.user.name.localeCompare(b.user.name));
+
+  const myRoleIn = (project: Project): ProjectRole | null =>
+    membersOf(project).find(m => m.userId === currentUser.id)?.role ?? null;
+
+  const setMembers = (projectId: string, update: (members: ProjectMember[]) => ProjectMember[]) => {
+    setProjects(prev => prev.map(p => (p.id === projectId ? { ...p, members: update(membersOf(p)) } : p)));
+  };
+
+  const projectName = (projectId: string) => projects.find(p => p.id === projectId)?.name ?? 'project';
+  const userName = (userId: string) => teamMembers.find(u => u.id === userId)?.name ?? 'Someone';
+
+  const addProjectMembers = (projectId: string, userIds: string[], role: ProjectRole, people: User[] = []) => {
+    if (userIds.length === 0) return;
+    const userName = (id: string) => people.find(u => u.id === id)?.name ?? teamMembers.find(u => u.id === id)?.name ?? 'Someone';
+    const now = new Date().toISOString();
+    setMembers(projectId, members => [
+      ...members,
+      ...userIds.filter(id => !members.some(m => m.userId === id)).map(userId => ({ userId, role, addedAt: now }))
+    ]);
+    const names = userIds.map(userName);
     setRecentActivity(prev => [
-      { text: `Switched active user session to ${user.name} (${user.role})`, time: 'Just now' },
+      { text: `${currentUser.name} added ${names.join(', ')} to ${projectName(projectId)} as ${role}`, time: 'Just now' },
       ...prev
     ]);
+    userIds.filter(id => id !== currentUser.id).forEach((id, i) => {
+      setNotifications(prev => [{
+        id: `notif-${Date.now()}-${i}`,
+        title: 'Added to project',
+        message: `${userName(id)} was added to ${projectName(projectId)} as ${role}`,
+        timestamp: 'Just now',
+        read: false,
+        type: 'assignment',
+        author: currentUser
+      }, ...prev]);
+    });
+  };
+
+  const ownerCount = (members: ProjectMember[]) => members.filter(m => m.role === 'owner').length;
+
+  const updateProjectMemberRole = (projectId: string, userId: string, role: ProjectRole): ActionResult => {
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return { ok: false, error: 'Project not found.' };
+    const members = membersOf(project);
+    const target = members.find(m => m.userId === userId);
+    if (!target) return { ok: false, error: 'That person is not a member of this project.' };
+    if (target.role === 'owner' && role !== 'owner' && ownerCount(members) <= 1) {
+      return { ok: false, error: 'A project needs at least one owner. Make someone else an owner first.' };
+    }
+    setMembers(projectId, ms => ms.map(m => (m.userId === userId ? { ...m, role } : m)));
+    setRecentActivity(prev => [{ text: `${currentUser.name} changed ${userName(userId)}'s role to ${role}`, time: 'Just now' }, ...prev]);
+    return { ok: true };
+  };
+
+  const removeProjectMember = (projectId: string, userId: string): ActionResult => {
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return { ok: false, error: 'Project not found.' };
+    const members = membersOf(project);
+    const target = members.find(m => m.userId === userId);
+    if (!target) return { ok: false, error: 'That person is not a member of this project.' };
+    if (target.role === 'owner' && ownerCount(members) <= 1) {
+      return { ok: false, error: 'You cannot remove the only owner of a project.' };
+    }
+    setMembers(projectId, ms => ms.filter(m => m.userId !== userId));
+    setRecentActivity(prev => [{ text: `${currentUser.name} removed ${userName(userId)} from ${project.name}`, time: 'Just now' }, ...prev]);
+    return { ok: true };
+  };
+
+  const isProjectKeyTaken = (key: string, exceptProjectId?: string) =>
+    projects.some(p => p.id !== exceptProjectId && p.key.toUpperCase() === key.trim().toUpperCase());
+
+  // ---- Workspace people ---------------------------------------------------------
+
+  const inviteTeamMember = (data: { name: string; email: string; role: string; department: string }) => {
+    const email = data.email.trim().toLowerCase();
+    if (teamMembers.some(u => u.email.toLowerCase() === email)) {
+      return { ok: false as const, error: 'Someone with this email is already in the workspace.' };
+    }
+    const user: User = withAvatar({
+      id: `user-invited-${Date.now()}`,
+      name: data.name.trim(),
+      email,
+      avatar: '',
+      role: data.role.trim() || 'Team member',
+      department: data.department.trim() || 'General',
+      status: 'invited'
+    });
+    setTeamMembers(prev => [...prev, user]);
+    setRecentActivity(prev => [{ text: `${currentUser.name} invited ${user.name} (${user.email}) to the workspace`, time: 'Just now' }, ...prev]);
+    return { ok: true as const, user };
+  };
+
+  const openProjectSettings = (projectId: string | null) => {
+    setEditingProjectId(projectId);
+    setIsCreateProjectModalOpen(projectId !== null);
   };
 
   const markAllNotificationsRead = () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-  };
-
-  // Clerk Auth Actions
-  const clerkSignUp = async (data: {
-    name: string;
-    email: string;
-    password?: string;
-    role?: string;
-    department?: string;
-  }) => {
-    try {
-      const res = await fetch('/api/auth/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      const result = await res.json();
-      if (result.success && result.user && result.session) {
-        setClerkSession(result.session);
-        setCurrentUser(result.user);
-        setTeamMembers(prev => {
-          if (prev.some(u => u.id === result.user.id || u.email === result.user.email)) return prev;
-          return [result.user, ...prev];
-        });
-        setRecentActivity(prev => [
-          { text: `New user verified via Clerk: ${result.user.name} (${result.user.email})`, time: 'Just now' },
-          ...prev
-        ]);
-        return { success: true, user: result.user };
-      }
-      return { success: false, error: result.error || 'Failed to sign up with Clerk.' };
-    } catch {
-      // Local fallback
-      const fallbackUser: User = {
-        id: `user-clerk-${Date.now()}`,
-        name: data.name,
-        email: data.email,
-        avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
-        role: data.role || 'Software Engineer',
-        department: data.department || 'Engineering',
-        status: 'online'
-      };
-      const fallbackSession: ClerkSession = {
-        token: `sess_clerk_${Date.now()}`,
-        userId: fallbackUser.id,
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 86400000 * 7).toISOString()
-      };
-      setClerkSession(fallbackSession);
-      setCurrentUser(fallbackUser);
-      setTeamMembers(prev => [fallbackUser, ...prev]);
-      return { success: true, user: fallbackUser };
-    }
-  };
-
-  const clerkSignIn = async (data: { email: string; password?: string }) => {
-    try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      const result = await res.json();
-      if (result.success && result.user && result.session) {
-        setClerkSession(result.session);
-        setCurrentUser(result.user);
-        setRecentActivity(prev => [
-          { text: `Authenticated session via Clerk: ${result.user.name}`, time: 'Just now' },
-          ...prev
-        ]);
-        return { success: true, user: result.user };
-      }
-      return { success: false, error: result.error || 'Invalid credentials.' };
-    } catch {
-      // Check existing user in directory
-      const found = teamMembers.find(m => m.email.toLowerCase() === data.email.toLowerCase());
-      if (found) {
-        setCurrentUser(found);
-        setClerkSession({
-          token: `sess_clerk_${Date.now()}`,
-          userId: found.id,
-          createdAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + 86400000 * 7).toISOString()
-        });
-        return { success: true, user: found };
-      }
-      return { success: false, error: 'User not found in directory.' };
-    }
-  };
-
-  const clerkSignOut = async () => {
-    if (clerkSession?.token) {
-      try {
-        await fetch('/api/auth/logout', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: clerkSession.token })
-        });
-      } catch {}
-    }
-    setClerkSession(null);
-    setCurrentUser(teamMembers[0]);
   };
 
   return (
@@ -865,9 +920,12 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         isCreateModalOpen,
         setIsCreateModalOpen,
         isCreateProjectModalOpen,
-        setIsCreateProjectModalOpen,
-        isAuthModalOpen,
-        setIsAuthModalOpen,
+        setIsCreateProjectModalOpen: (open: boolean) => {
+          if (!open) setEditingProjectId(null);
+          setIsCreateProjectModalOpen(open);
+        },
+        editingProjectId,
+        openProjectSettings,
         setSelectedIssue,
 
         createProject,
@@ -887,13 +945,15 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         addColumn,
         updateColumn,
         deleteColumn,
-        switchUser,
         markAllNotificationsRead,
 
-        clerkSession,
-        clerkSignUp,
-        clerkSignIn,
-        clerkSignOut
+        getProjectMembers,
+        myRoleIn,
+        addProjectMembers,
+        updateProjectMemberRole,
+        removeProjectMember,
+        isProjectKeyTaken,
+        inviteTeamMember
       }}
     >
       {children}

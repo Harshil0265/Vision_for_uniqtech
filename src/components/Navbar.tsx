@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useProject } from '../context/ProjectContext';
 // Clerk removed - using custom user display
 import { VisionLogo } from './VisionLogo';
+import { AccountMenu } from './AccountMenu';
 import {
   Plus,
   Search,
@@ -20,7 +21,6 @@ export const Navbar: React.FC = () => {
     projects,
     activeProject,
     setActiveProject,
-    currentUser,
     unreadNotificationCount,
     notifications,
     markAllNotificationsRead,
@@ -28,7 +28,6 @@ export const Navbar: React.FC = () => {
     lastSyncTime,
     setIsCreateModalOpen,
     setIsCreateProjectModalOpen,
-    setIsAuthModalOpen,
     searchQuery,
     setSearchQuery,
     setSelectedIssue,
@@ -36,7 +35,6 @@ export const Navbar: React.FC = () => {
     setActiveTab
   } = useProject();
 
-  // Using currentUser from context instead of Clerk
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
 
@@ -199,9 +197,9 @@ export const Navbar: React.FC = () => {
           <span className="font-medium">New Project</span>
         </button>
 
-        {/* Real-Time Supabase Sync Status Indicator */}
+        {/* Local sync status indicator */}
         <div
-          title={`Supabase Realtime Channel: Synced at ${lastSyncTime.toLocaleTimeString()}`}
+          title={`Workspace saved locally at ${lastSyncTime.toLocaleTimeString()}`}
           className="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded-md bg-emerald-50/80 border border-emerald-200/80 text-[11px] text-emerald-800"
         >
           <span className="relative flex h-2 w-2">
@@ -217,7 +215,7 @@ export const Navbar: React.FC = () => {
             />
           </span>
           <span className="font-mono text-emerald-700 font-medium">
-            {realtimeStatus === 'connected' ? 'Supabase Live' : 'Syncing...'}
+            {realtimeStatus === 'connected' ? 'Saved locally' : 'Syncing...'}
           </span>
         </div>
 
@@ -296,11 +294,8 @@ export const Navbar: React.FC = () => {
           )}
         </div>
 
-        {/* Clerk Auth Profile & Switcher Button */}
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold cursor-pointer hover:ring-2 hover:ring-blue-400 transition-all" title={currentUser.name}>{currentUser.name.split(" ").map(n => n[0]).join("")}</div>
-
-        </div>
+        {/* Signed-in account */}
+        <AccountMenu />
       </div>
     </header>
   );

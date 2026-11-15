@@ -9,7 +9,8 @@ export interface User {
   avatar: string;
   role: string;
   department: string;
-  status: 'online' | 'busy' | 'away' | 'offline';
+  /** 'invited' = added to the workspace by email but has not signed up yet. */
+  status: 'online' | 'busy' | 'away' | 'offline' | 'invited';
 }
 
 export interface Subtask {
@@ -42,6 +43,15 @@ export interface KanbanColumn {
   category: 'todo' | 'in_progress' | 'done';
 }
 
+/** Access level of a person inside one project. */
+export type ProjectRole = 'owner' | 'admin' | 'member' | 'viewer';
+
+export interface ProjectMember {
+  userId: string; // references User.id
+  role: ProjectRole;
+  addedAt: string; // ISO date
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -53,6 +63,8 @@ export interface Project {
   defaultAssignee: 'unassigned' | 'lead';
   iconGradient: string;
   createdAt: string;
+  /** People who can access the project. Older saved projects may not have it yet (see getProjectMembers). */
+  members?: ProjectMember[];
 }
 
 export interface Issue {
@@ -103,18 +115,14 @@ export interface AppNotification {
   author?: User;
 }
 
-export interface ClerkSession {
-  token: string;
-  userId: string;
-  createdAt: string;
-  expiresAt: string;
-}
-
 export type ViewTab =
+  | 'dashboard'
   | 'board'
   | 'backlog'
   | 'analytics'
   | 'team'
-  | 'projects';
+  | 'projects'
+  | 'members'
+  | 'profile';
 
 export type SwimlaneType = 'none' | 'assignee' | 'epic' | 'priority';

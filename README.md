@@ -1,20 +1,39 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Vision
 
-# Run and deploy your AI Studio app
+Project and sprint management: home page, sign-up and sign-in, dashboard, projects, project members and roles, Kanban board, backlog and sprints, work items, analytics, team directory, and profile settings.
 
-This contains everything you need to run your app locally.
+| Part | Stack | Folder |
+|---|---|---|
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS | `src/` |
+| Backend | .NET 8 Web API | `backend/` (see [backend/README.md](backend/README.md)) |
+| Database | Microsoft SQL Server | `backend/Vision.Data` |
 
-View your app in AI Studio: https://ai.studio/apps/4dec609c-7c7a-490b-bb4a-e1648123af07
+## Run the frontend
 
-## Run Locally
+**Prerequisite:** Node.js 20 or newer.
 
-**Prerequisites:**  Node.js
+```bash
+npm install
+npm run dev        # http://localhost:5173
+```
 
+The frontend calls the API at `/api`, which Vite forwards to `http://localhost:5286` (the .NET `http` launch profile). Start the API with:
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+```bash
+dotnet run --project backend/Vision.API --launch-profile http
+```
+
+**Without the backend:** in development, if the API can't be reached, sign-in falls back to **offline demo mode** with local accounts. The footer and account menu show this. Every page still works, and data is saved in the browser. Demo accounts (the same as the mock API's): `test@test.com` / `test`, `alex@vision.dev` / `password123`, `sarah@vision.dev` / `password123`. To change this behaviour, set `VITE_AUTH_MODE` (see [.env.example](.env.example)).
+
+## Scripts
+
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Development server |
+| `npm run build` | Production build into `dist/` |
+| `npm run preview` | Serve the production build |
+| `npm run lint` | Type-check (`tsc --noEmit`) |
+
+## For backend and database developers
+
+[docs/API_CONTRACT.md](docs/API_CONTRACT.md) lists every form, its fields and validation, and the endpoint and JSON the frontend expects. The same shapes are typed in [src/types/api.ts](src/types/api.ts).

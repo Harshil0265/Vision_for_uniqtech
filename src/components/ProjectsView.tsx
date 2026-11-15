@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { useProject } from '../context/ProjectContext';
+import { canManageProject, useProject } from '../context/ProjectContext';
+import { RoleBadge } from './ui';
 import { Project } from '../types';
 import { WorkItemIcon } from './WorkItemIcon';
 import {
@@ -8,7 +9,8 @@ import {
   Search,
   User,
   ArrowRight,
-  Trash2,
+  Settings2,
+  Users,
   Calendar,
   CheckCircle2,
   ShieldCheck,
@@ -25,7 +27,9 @@ export const ProjectsView: React.FC = () => {
     sprints,
     setIsCreateProjectModalOpen,
     setActiveTab,
-    deleteProject
+    openProjectSettings,
+    getProjectMembers,
+    myRoleIn
   } = useProject();
 
   const [projectSearch, setProjectSearch] = useState('');
@@ -52,7 +56,7 @@ export const ProjectsView: React.FC = () => {
             <span className="text-xs font-mono text-slate-500 font-normal">({projects.length} projects)</span>
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Enterprise project directory with custom key schemas, task type schemes, and sprint pipelines.
+            Every project in the workspace. Open one to see its board, or manage its members and settings.
           </p>
         </div>
 
@@ -86,6 +90,8 @@ export const ProjectsView: React.FC = () => {
           const projSprints = sprints.filter(s => s.projectId === proj.id);
           const activeProjSprint = projSprints.find(s => s.status === 'active');
           const completedIssues = projIssues.filter(i => i.status === 'done').length;
+          const role = myRoleIn(proj);
+          const memberCount = getProjectMembers(proj).length;
 
           return (
             <div
@@ -122,19 +128,19 @@ export const ProjectsView: React.FC = () => {
                     </div>
                   </div>
 
-                  {projects.length > 1 && (
-                    <button
-                      onClick={() => {
-                        if (confirm(`Delete project "${proj.name}" and all its issues?`)) {
-                          deleteProject(proj.id);
-                        }
-                      }}
-                      className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-100 cursor-pointer"
-                      title="Delete project"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {role && <RoleBadge role={role} />}
+                    {canManageProject(role) && (
+                      <button
+                        onClick={() => openProjectSettings(proj.id)}
+                        className="p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-slate-100 cursor-pointer"
+                        title="Project settings"
+                        aria-label={`Settings for ${proj.name}`}
+                      >
+                        <Settings2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Description */}
@@ -179,7 +185,7 @@ export const ProjectsView: React.FC = () => {
 
               {/* Footer: Lead & Switch Action */}
               <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <img
                     src={proj.lead.avatar}
                     alt={proj.lead.name}
@@ -190,6 +196,14 @@ export const ProjectsView: React.FC = () => {
                   </div>
                 </div>
 
+                <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => { setActiveProject(proj); setActiveTab('members'); }}
+                  className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-100 cursor-pointer"
+                  title="Project members"
+                >
+                  <Users className="w-3.5 h-3.5" /> {memberCount}
+                </button>
                 <button
                   onClick={() => handleSelectProject(proj)}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
@@ -201,6 +215,7 @@ export const ProjectsView: React.FC = () => {
                   <span>{isActive ? 'View Board' : 'Switch Project'}</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
+                </div>
               </div>
             </div>
           );

@@ -4,7 +4,9 @@
  */
 
 import React from 'react';
+import { AuthProvider } from './context/AuthContext';
 import { ProjectProvider, useProject } from './context/ProjectContext';
+import { AuthWrapper } from './components/AuthWrapper';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { KanbanBoard } from './components/KanbanBoard';
@@ -15,13 +17,24 @@ import { TeamView } from './components/TeamView';
 import { IssueDetailModal } from './components/IssueDetailModal';
 import { CreateIssueModal } from './components/CreateIssueModal';
 import { CreateProjectModal } from './components/CreateProjectModal';
-import { Activity, ShieldCheck } from 'lucide-react';
+import { DashboardView } from './components/DashboardView';
+import { ProjectMembersView } from './components/ProjectMembersView';
+import { ProfileView } from './components/ProfileView';
+import { useAuth } from './context/AuthContext';
+import { Activity, ServerCrash, ShieldCheck } from 'lucide-react';
 
 const AppContent: React.FC = () => {
-  const { activeTab, recentActivity, realtimeStatus, activeProject } = useProject();
+  const { activeTab, recentActivity, realtimeStatus } = useProject();
+  const { mode } = useAuth();
 
   const renderActiveView = () => {
     switch (activeTab) {
+      case 'dashboard':
+        return <DashboardView />;
+      case 'members':
+        return <ProjectMembersView />;
+      case 'profile':
+        return <ProfileView />;
       case 'board':
         return <KanbanBoard />;
       case 'backlog':
@@ -53,7 +66,7 @@ const AppContent: React.FC = () => {
         </main>
       </div>
 
-      {/* Bottom Real-Time Event & Supabase Broadcast Ticker */}
+      {/* Bottom activity ticker */}
       <footer className="h-7 bg-white border-t border-slate-200/90 px-4 flex items-center justify-between text-[11px] text-slate-500 select-none shrink-0 z-20">
         <div className="flex items-center gap-3 overflow-hidden">
           <div className="flex items-center gap-1.5 shrink-0 text-slate-700">
@@ -63,7 +76,7 @@ const AppContent: React.FC = () => {
               }`}
             />
             <span className="font-mono text-[10px] text-slate-500 font-medium">
-              .NET Backend [{activeProject.key}:api-connected]
+              Workspace data saved in this browser
             </span>
           </div>
 
@@ -82,10 +95,17 @@ const AppContent: React.FC = () => {
         </div>
 
         <div className="hidden md:flex items-center gap-4 shrink-0 font-mono text-[10px] text-slate-500">
-          <span className="flex items-center gap-1 font-medium">
-            <ShieldCheck className="w-3 h-3 text-emerald-600" />
-            <span>JWT Auth: Active</span>
-          </span>
+          {mode === 'local' ? (
+            <span className="flex items-center gap-1 font-medium text-amber-700" title="The backend API could not be reached. You are signed in with an offline demo account.">
+              <ServerCrash className="w-3 h-3" />
+              <span>Offline demo mode</span>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 font-medium">
+              <ShieldCheck className="w-3 h-3 text-emerald-600" />
+              <span>Signed in via API</span>
+            </span>
+          )}
         </div>
       </footer>
 
@@ -99,8 +119,12 @@ const AppContent: React.FC = () => {
 
 export default function App() {
   return (
-    <ProjectProvider>
-      <AppContent />
-    </ProjectProvider>
+    <AuthProvider>
+      <ProjectProvider>
+        <AuthWrapper>
+          <AppContent />
+        </AuthWrapper>
+      </ProjectProvider>
+    </AuthProvider>
   );
 }

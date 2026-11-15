@@ -6,9 +6,11 @@ import {
   ListTodo,
   BarChart3,
   Users,
+  UserCog,
   Calendar,
   FolderKanban,
-  FolderPlus
+  FolderPlus,
+  LayoutDashboard
 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
@@ -19,15 +21,29 @@ export const Sidebar: React.FC = () => {
     projects,
     activeSprint,
     issues,
-    setIsCreateProjectModalOpen
+    setIsCreateProjectModalOpen,
+    getProjectMembers
   } = useProject();
 
-  const navItems: { id: ViewTab; label: string; icon: React.ReactNode; badge?: string }[] = [
-    { id: 'board', label: 'Active Board', icon: <Kanban className="w-4 h-4" /> },
-    { id: 'backlog', label: 'Backlog & Sprints', icon: <ListTodo className="w-4 h-4" /> },
-    { id: 'analytics', label: 'Sprint Analytics', icon: <BarChart3 className="w-4 h-4" /> },
-    { id: 'projects', label: 'Workspace Projects', icon: <FolderKanban className="w-4 h-4" />, badge: `${projects.length}` },
-    { id: 'team', label: 'Team Directory', icon: <Users className="w-4 h-4" /> }
+  type NavItem = { id: ViewTab; label: string; icon: React.ReactNode; badge?: string };
+  const navSections: { title?: string; items: NavItem[] }[] = [
+    { items: [{ id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> }] },
+    {
+      title: 'This project',
+      items: [
+        { id: 'board', label: 'Active Board', icon: <Kanban className="w-4 h-4" /> },
+        { id: 'backlog', label: 'Backlog & Sprints', icon: <ListTodo className="w-4 h-4" /> },
+        { id: 'analytics', label: 'Sprint Analytics', icon: <BarChart3 className="w-4 h-4" /> },
+        { id: 'members', label: 'Members', icon: <UserCog className="w-4 h-4" />, badge: `${getProjectMembers(activeProject).length}` }
+      ]
+    },
+    {
+      title: 'Workspace',
+      items: [
+        { id: 'projects', label: 'All Projects', icon: <FolderKanban className="w-4 h-4" />, badge: `${projects.length}` },
+        { id: 'team', label: 'Team Directory', icon: <Users className="w-4 h-4" /> }
+      ]
+    }
   ];
 
   // Active Sprint Stats for active project
@@ -59,9 +75,14 @@ export const Sidebar: React.FC = () => {
           </div>
         </div>
 
-        {/* Primary Navigation List */}
-        <div className="space-y-1">
-          {navItems.map(item => {
+        {/* Primary Navigation */}
+        <nav aria-label="Main" className="space-y-4">
+          {navSections.map((section, si) => (
+          <div key={si} className="space-y-1">
+            {section.title && (
+              <div className="px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">{section.title}</div>
+            )}
+          {section.items.map(item => {
             const isActive = activeTab === item.id;
             return (
               <button
@@ -73,7 +94,7 @@ export const Sidebar: React.FC = () => {
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70 border border-transparent'
                 }`}
               >
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-2.5" aria-current={isActive ? 'page' : undefined}>
                   <span className={isActive ? 'text-blue-600' : 'text-slate-400'}>{item.icon}</span>
                   <span>{item.label}</span>
                 </div>
@@ -85,7 +106,9 @@ export const Sidebar: React.FC = () => {
               </button>
             );
           })}
-        </div>
+          </div>
+          ))}
+        </nav>
       </div>
 
       {/* Bottom Area: Active Sprint Mini-Card & Add Project Quick Action */}

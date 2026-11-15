@@ -17,6 +17,14 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      // Forward API calls to the .NET API (backend/Vision.API, launch profile "http").
+      proxy: {
+        '/api': {
+          target: process.env.VISION_API_URL || 'http://localhost:5286',
+          changeOrigin: true,
+          secure: false,
+        },
+      },
     },
   };
 });
