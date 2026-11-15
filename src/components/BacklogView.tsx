@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { Sprint, Issue } from '../types';
 import { WorkItemIcon, PriorityIcon } from './WorkItemIcon';
-import { getUserRoleInProject, canEditIssue, canCreateSprint } from '../utils/permissions';
 import {
   Calendar,
   CheckCircle2,
@@ -19,7 +18,6 @@ export const BacklogView: React.FC = () => {
     sprints,
     issues,
     activeProject,
-    currentUser,
     startSprint,
     completeSprint,
     createSprint,
@@ -32,32 +30,9 @@ export const BacklogView: React.FC = () => {
   const [isNewSprintFormOpen, setIsNewSprintFormOpen] = useState(false);
   const [newSprintName, setNewSprintName] = useState('');
   const [newSprintGoal, setNewSprintGoal] = useState('');
-  const [sortBy, setSortBy] = useState<'default' | 'dueDate-asc' | 'dueDate-desc'>('default');
 
-  // Safeguard: Only show sprints and issues from the active project
   const projectSprints = sprints.filter(s => s.projectId === activeProject.id);
   const projectIssues = issues.filter(i => i.projectId === activeProject.id);
-
-  // Sort issues by due date if selected
-  const sortIssues = (issuesToSort: Issue[]) => {
-    if (sortBy === 'default') return issuesToSort;
-    
-    return [...issuesToSort].sort((a, b) => {
-      const aDate = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
-      const bDate = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
-      
-      if (sortBy === 'dueDate-asc') {
-        return aDate - bDate;
-      } else {
-        return bDate - aDate;
-      }
-    });
-  };
-
-  // Get user's role in the current project
-  const userRole = getUserRoleInProject(activeProject, currentUser.id);
-  const canEdit = userRole ? canEditIssue(userRole) : false;
-  const canManageSprints = userRole ? canCreateSprint(userRole) : false;
 
   const toggleCollapse = (id: string) => {
     setCollapsedSprints(prev => ({ ...prev, [id]: !prev[id] }));
@@ -65,7 +40,7 @@ export const BacklogView: React.FC = () => {
 
   const handleCreateSprint = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canManageSprints || !newSprintName.trim()) return;
+    if (!newSprintName.trim()) return;
     createSprint(
       newSprintName.trim(),
       newSprintGoal.trim() || 'Sprint goals defined during planning.',
@@ -137,12 +112,9 @@ export const BacklogView: React.FC = () => {
           {/* Quick Move Sprint Dropdown */}
           <select
             value={currentSprintId || 'backlog'}
-            onChange={e => canEdit && moveIssueSprint(issue.id, e.target.value === 'backlog' ? 'backlog' : e.target.value)}
-            disabled={!canEdit}
-            className={`bg-white border border-slate-200 text-slate-600 text-[11px] rounded px-2 py-0.5 focus:outline-none focus:border-blue-500 shadow-2xs font-medium ${
-              canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
-            }`}
-            title={!canEdit ? 'Read-only (viewer role)' : 'Move to another Sprint'}
+            onChange={e => moveIssueSprint(issue.id, e.target.value === 'backlog' ? 'backlog' : e.target.value)}
+            className="bg-white border border-slate-200 text-slate-600 text-[11px] rounded px-2 py-0.5 focus:outline-none focus:border-blue-500 cursor-pointer shadow-2xs font-medium"
+            title="Move to another Sprint"
           >
             {projectSprints.map(s => (
               <option key={s.id} value={s.id}>
@@ -174,39 +146,20 @@ export const BacklogView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2.5">
-          {/* Due Date Sort Dropdown */}
-          <select
-            value={sortBy}
-            onChange={e => setSortBy(e.target.value as any)}
-            className="bg-white border border-slate-200 text-slate-700 text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500 shadow-2xs font-medium cursor-pointer"
+          <button
+            onClick={() => setIsNewSprintFormOpen(!isNewSprintFormOpen)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700 shadow-2xs transition-colors cursor-pointer"
           >
-            <option value="default">Default Sort</option>
-            <option value="dueDate-asc">Due Date ↑ (Earliest First)</option>
-            <option value="dueDate-desc">Due Date ↓ (Latest First)</option>
-          </select>
-
-          {canManageSprints ? (
-            <button
-              onClick={() => setIsNewSprintFormOpen(!isNewSprintFormOpen)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700 shadow-2xs transition-colors cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Create Sprint</span>
-            </button>
-          ) : (
-            <div className="text-[11px] text-slate-400 italic">
-              Admin or Owner role required to create sprints
-            </div>
-          )}
-          {canEdit && (
-            <button
-              onClick={() => setIsCreateModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-xs transition-all active:scale-95 cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Create Issue</span>
-            </button>
-          )}
+            <Plus className="w-3.5 h-3.5" />
+            <span>Create Sprint</span>
+          </button>
+          <button
+            onClick={() => setIsCreateModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-xs transition-all active:scale-95 cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Create Issue</span>
+          </button>
         </div>
       </div>
 
@@ -255,7 +208,7 @@ export const BacklogView: React.FC = () => {
       {/* Sprints Buckets */}
       <div className="space-y-6">
         {projectSprints.map(sprint => {
-          const sprintIssues = sortIssues(projectIssues.filter(i => i.sprintId === sprint.id));
+          const sprintIssues = projectIssues.filter(i => i.sprintId === sprint.id);
           const isCollapsed = collapsedSprints[sprint.id] || false;
           const totalPoints = sprintIssues.reduce((acc, curr) => acc + (curr.storyPoints || 0), 0);
           const completedPoints = sprintIssues
@@ -352,9 +305,9 @@ export const BacklogView: React.FC = () => {
 
         {/* Product Backlog Bucket for Active Project */}
         {(() => {
-          const backlogIssues = sortIssues(projectIssues.filter(
+          const backlogIssues = projectIssues.filter(
             i => i.sprintId === 'backlog' || i.sprintId === null || !i.sprintId
-          ));
+          );
           const isCollapsed = collapsedSprints['backlog'] || false;
           const totalPoints = backlogIssues.reduce((acc, curr) => acc + (curr.storyPoints || 0), 0);
 

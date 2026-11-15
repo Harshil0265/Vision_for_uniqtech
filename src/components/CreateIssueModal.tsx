@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { WorkItemType, Priority } from '../types';
 import { WorkItemIcon } from './WorkItemIcon';
-import { getUserRoleInProject, canEditIssue } from '../utils/permissions';
 import { X, FolderKanban } from 'lucide-react';
 
 export const CreateIssueModal: React.FC = () => {
@@ -15,18 +14,13 @@ export const CreateIssueModal: React.FC = () => {
     teamMembers,
     sprints,
     activeSprint,
-    columns,
-    currentUser
+    columns
   } = useProject();
 
   if (!isCreateModalOpen) return null;
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>(activeProject.id);
   const currentProj = projects.find(p => p.id === selectedProjectId) || activeProject;
-
-  // Get user's role in the selected project
-  const userRole = getUserRoleInProject(currentProj, currentUser.id);
-  const canCreate = userRole ? canEditIssue(userRole) : false;
 
   const [type, setType] = useState<WorkItemType>(
     currentProj.allowedIssueTypes[0] || 'task'
@@ -40,7 +34,6 @@ export const CreateIssueModal: React.FC = () => {
   const [sprintId, setSprintId] = useState<string>(activeSprint ? activeSprint.id : 'backlog');
   const [storyPoints, setStoryPoints] = useState<number>(3);
   const [status, setStatus] = useState<string>('todo');
-  const [dueDate, setDueDate] = useState<string>('');
 
   // When project changes, adjust default allowed types
   useEffect(() => {
@@ -51,10 +44,6 @@ export const CreateIssueModal: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canCreate) {
-      alert('Viewers cannot create issues. Contact a project admin to request member access.');
-      return;
-    }
     if (!title.trim()) return;
 
     const selectedAssignee = assigneeId === 'unassigned' ? null : teamMembers.find(m => m.id === assigneeId) || null;
@@ -68,8 +57,7 @@ export const CreateIssueModal: React.FC = () => {
       assignee: selectedAssignee,
       sprintId: sprintId === 'backlog' ? null : sprintId,
       storyPoints,
-      status,
-      dueDate: dueDate ? new Date(dueDate).toISOString() : undefined
+      status
     });
 
     setIsCreateModalOpen(false);
@@ -79,7 +67,6 @@ export const CreateIssueModal: React.FC = () => {
     setStoryPoints(3);
     setPriority('medium');
     setAssigneeId('unassigned');
-    setDueDate('');
   };
 
   const projectSprints = sprints.filter(s => s.projectId === selectedProjectId);
@@ -107,13 +94,6 @@ export const CreateIssueModal: React.FC = () => {
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
-          {/* Viewer Warning */}
-          {!canCreate && (
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
-              <strong>Viewers cannot create issues.</strong> Contact a project admin to request member access.
-            </div>
-          )}
-
           {/* Target Project Selection */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -187,19 +167,6 @@ export const CreateIssueModal: React.FC = () => {
               value={description}
               onChange={e => setDescription(e.target.value)}
               className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
-            />
-          </div>
-
-          {/* Due Date */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Due Date & Time
-            </label>
-            <input
-              type="datetime-local"
-              value={dueDate}
-              onChange={e => setDueDate(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white"
             />
           </div>
 
@@ -308,10 +275,7 @@ export const CreateIssueModal: React.FC = () => {
             </button>
             <button
               type="submit"
-              disabled={!canCreate}
-              className={`px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-xs transition-all ${
-                canCreate ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
-              }`}
+              className="px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-xs transition-all cursor-pointer"
             >
               Create Work Item
             </button>

@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { Issue, KanbanColumn, SwimlaneType } from '../types';
 import { WorkItemIcon, PriorityIcon } from './WorkItemIcon';
-import { getUserRoleInProject, canEditIssue } from '../utils/permissions';
 import {
   SlidersHorizontal,
   CheckCircle2,
@@ -13,9 +12,7 @@ import {
   X,
   Layers,
   MessageSquare,
-  CheckSquare,
-  Clock,
-  Paperclip
+  CheckSquare
 } from 'lucide-react';
 
 export const KanbanBoard: React.FC = () => {
@@ -47,15 +44,13 @@ export const KanbanBoard: React.FC = () => {
   const [draggedIssueId, setDraggedIssueId] = useState<string | null>(null);
   const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null);
 
-  // Get user's role in the current project
-  const userRole = getUserRoleInProject(activeProject, currentUser.id);
-  const canEdit = userRole ? canEditIssue(userRole) : false;
-
-  // Safeguard: Only show issues from the active project
-  const projectIssues = issues.filter(i => i.projectId === activeProject.id);
-
   // Apply active project, active sprint & quick filters
-  const filteredIssues = projectIssues.filter(issue => {
+  const filteredIssues = issues.filter(issue => {
+    // Project filter
+    if (issue.projectId && issue.projectId !== activeProject.id) {
+      return false;
+    }
+
     // Only issues in active sprint or backlog if no active sprint
     if (activeSprint) {
       if (issue.sprintId !== activeSprint.id) return false;
@@ -107,22 +102,16 @@ export const KanbanBoard: React.FC = () => {
 
   // Drag handlers
   const handleDragStart = (e: React.DragEvent, id: string) => {
-    if (!canEdit) {
-      e.preventDefault();
-      return;
-    }
     e.dataTransfer.setData('text/plain', id);
     setDraggedIssueId(id);
   };
 
   const handleDragOver = (e: React.DragEvent, colId: string) => {
-    if (!canEdit) return;
     e.preventDefault();
     setDragOverColumnId(colId);
   };
 
   const handleDrop = (e: React.DragEvent, colId: string) => {
-    if (!canEdit) return;
     e.preventDefault();
     const id = e.dataTransfer.getData('text/plain') || draggedIssueId;
     if (id) {
@@ -136,24 +125,18 @@ export const KanbanBoard: React.FC = () => {
   const renderCard = (issue: Issue) => {
     const isBlocker = issue.priority === 'blocker';
     const subtaskCompleted = issue.subtasks.filter(st => st.completed).length;
-    
-    // Check if issue is overdue
-    const isOverdue = issue.dueDate && new Date(issue.dueDate) < new Date() && issue.status !== 'done';
 
     return (
       <div
         key={issue.id}
-        draggable={canEdit}
+        draggable
         onDragStart={e => handleDragStart(e, issue.id)}
         onClick={() => setSelectedIssue(issue)}
         className={`group p-3.5 rounded-xl bg-white hover:bg-slate-50/80 border transition-all duration-150 cursor-pointer shadow-2xs hover:shadow-xs ${
-          isOverdue
-            ? 'border-red-400 hover:border-red-500'
-            : isBlocker
+          isBlocker
             ? 'border-red-300 hover:border-red-400 bg-red-50/20'
             : 'border-slate-200/90 hover:border-blue-300'
-        } ${draggedIssueId === issue.id ? 'opacity-40 scale-98' : ''} ${!canEdit ? 'cursor-default' : ''}`}
-        title={!canEdit ? 'Read-only view (viewer role)' : ''}
+        } ${draggedIssueId === issue.id ? 'opacity-40 scale-98' : ''}`}
       >
         {/* Top: Issue Key, Type, Priority & Story Points */}
         <div className="flex items-center justify-between gap-2 mb-2">
@@ -187,23 +170,6 @@ export const KanbanBoard: React.FC = () => {
           </div>
         )}
 
-        {/* Due Date Badge */}
-        {issue.dueDate && (
-          <div className="mb-2">
-            <span className={`text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 font-medium border ${
-              isOverdue 
-                ? 'text-red-700 bg-red-50 border-red-300' 
-                : 'text-blue-700 bg-blue-50 border-blue-200'
-            }`}>
-              <Clock className="w-2.5 h-2.5" />
-              <span>
-                {isOverdue ? 'OVERDUE: ' : 'Due: '}
-                {new Date(issue.dueDate).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-              </span>
-            </span>
-          </div>
-        )}
-
         {/* Footer: Subtasks & Assignee */}
         <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[11px] text-slate-500">
           <div className="flex items-center gap-2.5">
@@ -222,13 +188,6 @@ export const KanbanBoard: React.FC = () => {
               <span className="flex items-center gap-1 text-[10px] text-slate-500 font-mono">
                 <MessageSquare className="w-3 h-3 text-slate-400" />
                 {issue.comments.length}
-              </span>
-            )}
-
-            {issue.attachments && issue.attachments.length > 0 && (
-              <span className="flex items-center gap-1 text-[10px] text-slate-500 font-mono">
-                <Paperclip className="w-3 h-3 text-slate-400" />
-                {issue.attachments.length}
               </span>
             )}
           </div>

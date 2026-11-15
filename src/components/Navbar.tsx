@@ -1,8 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useProject } from '../context/ProjectContext';
-import { AccountMenu } from './AccountMenu';
+// Clerk removed - using custom user display
 import { VisionLogo } from './VisionLogo';
-import { getUserRoleInProject, canEditIssue } from '../utils/permissions';
 import {
   Plus,
   Search,
@@ -19,7 +18,6 @@ import {
 export const Navbar: React.FC = () => {
   const {
     projects,
-    isLoadingProjects,
     activeProject,
     setActiveProject,
     currentUser,
@@ -30,6 +28,7 @@ export const Navbar: React.FC = () => {
     lastSyncTime,
     setIsCreateModalOpen,
     setIsCreateProjectModalOpen,
+    setIsAuthModalOpen,
     searchQuery,
     setSearchQuery,
     setSelectedIssue,
@@ -37,12 +36,9 @@ export const Navbar: React.FC = () => {
     setActiveTab
   } = useProject();
 
+  // Using currentUser from context instead of Clerk
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
-
-  // Check if user can create issues in active project
-  const userRoleInActiveProject = getUserRoleInProject(activeProject, currentUser.id);
-  const canCreateIssue = userRoleInActiveProject ? canEditIssue(userRoleInActiveProject) : false;
 
   const notifRef = useRef<HTMLDivElement>(null);
   const projectRef = useRef<HTMLDivElement>(null);
@@ -112,16 +108,7 @@ export const Navbar: React.FC = () => {
               </div>
 
               <div className="max-h-64 overflow-y-auto p-1.5 space-y-1">
-                {isLoadingProjects ? (
-                  <div className="flex items-center justify-center py-8">
-                    <div className="text-xs text-slate-500">Loading projects...</div>
-                  </div>
-                ) : projects.length === 0 ? (
-                  <div className="flex items-center justify-center py-8">
-                    <div className="text-xs text-slate-500">No projects available</div>
-                  </div>
-                ) : (
-                  projects.map(p => {
+                {projects.map(p => {
                   const isCurrent = p.id === activeProject.id;
                   const count = issues.filter(i => i.projectId === p.id).length;
                   return (
@@ -151,8 +138,7 @@ export const Navbar: React.FC = () => {
                       {isCurrent && <Check className="w-4 h-4 text-blue-600 shrink-0" />}
                     </button>
                   );
-                })
-                )}
+                })}
               </div>
 
               <div className="p-2 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-[11px]">
@@ -196,12 +182,8 @@ export const Navbar: React.FC = () => {
       <div className="flex items-center gap-2.5">
         {/* Create Work Item Button with gradient */}
         <button
-          onClick={() => canCreateIssue && setIsCreateModalOpen(true)}
-          disabled={!canCreateIssue}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-medium shadow-xs transition-all duration-150 active:scale-95 ${
-            canCreateIssue ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'
-          }`}
-          title={!canCreateIssue ? 'Viewers cannot create issues. Contact a project admin to request member access.' : 'Create new work item'}
+          onClick={() => setIsCreateModalOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-medium shadow-xs transition-all duration-150 active:scale-95 cursor-pointer"
         >
           <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
           <span>Create</span>
@@ -217,9 +199,9 @@ export const Navbar: React.FC = () => {
           <span className="font-medium">New Project</span>
         </button>
 
-        {/* Local sync status indicator */}
+        {/* Real-Time Supabase Sync Status Indicator */}
         <div
-          title={`Workspace saved locally at ${lastSyncTime.toLocaleTimeString()}`}
+          title={`Supabase Realtime Channel: Synced at ${lastSyncTime.toLocaleTimeString()}`}
           className="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded-md bg-emerald-50/80 border border-emerald-200/80 text-[11px] text-emerald-800"
         >
           <span className="relative flex h-2 w-2">
@@ -235,7 +217,7 @@ export const Navbar: React.FC = () => {
             />
           </span>
           <span className="font-mono text-emerald-700 font-medium">
-            {realtimeStatus === 'connected' ? 'Saved locally' : 'Syncing...'}
+            {realtimeStatus === 'connected' ? 'Supabase Live' : 'Syncing...'}
           </span>
         </div>
 
@@ -314,9 +296,14 @@ export const Navbar: React.FC = () => {
           )}
         </div>
 
-        {/* Account: profile, active sessions, password, sign out */}
-        <AccountMenu />
+        {/* Clerk Auth Profile & Switcher Button */}
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold cursor-pointer hover:ring-2 hover:ring-blue-400 transition-all" title={currentUser.name}>{currentUser.name.split(" ").map(n => n[0]).join("")}</div>
+
+        </div>
       </div>
     </header>
   );
 };
+
+

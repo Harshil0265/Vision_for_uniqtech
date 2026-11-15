@@ -1,6 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useRef, ReactNode, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import confetti from 'canvas-confetti';
-import { useAuth } from './AuthContext';
 import {
   Issue,
   KanbanColumn,
@@ -12,8 +11,7 @@ import {
   WorkItemType,
   Priority,
   Project,
-  ProjectMember,
-  ProjectRole
+  ClerkSession
 } from '../types';
 import {
   TEAM_MEMBERS,
@@ -27,7 +25,6 @@ import {
 interface ProjectContextType {
   // Data
   projects: Project[];
-  isLoadingProjects: boolean;
   activeProject: Project;
   setActiveProject: (p: Project) => void;
   issues: Issue[];
@@ -65,12 +62,14 @@ interface ProjectContextType {
   setIsCreateModalOpen: (open: boolean) => void;
   isCreateProjectModalOpen: boolean;
   setIsCreateProjectModalOpen: (open: boolean) => void;
+  isAuthModalOpen: boolean;
+  setIsAuthModalOpen: (open: boolean) => void;
   setSelectedIssue: (issue: Issue | null) => void;
 
   // Actions
-  createProject: (data: Partial<Project>) => Promise<Project>;
-  updateProject: (id: string, updates: Partial<Project>) => Promise<void>;
-  deleteProject: (id: string) => Promise<void>;
+  createProject: (data: Partial<Project>) => Project;
+  updateProject: (id: string, updates: Partial<Project>) => void;
+  deleteProject: (id: string) => void;
   createIssue: (issue: Partial<Issue>) => Promise<Issue>;
   updateIssue: (id: string, updates: Partial<Issue>) => void;
   deleteIssue: (id: string) => void;
@@ -85,84 +84,77 @@ interface ProjectContextType {
   addColumn: (name: string, wipLimit: number, color: string, category?: 'todo' | 'in_progress' | 'done') => void;
   updateColumn: (id: string, updates: Partial<KanbanColumn>) => void;
   deleteColumn: (id: string) => void;
+  switchUser: (user: User) => void;
   markAllNotificationsRead: () => void;
 
-  // Project Members & Invitations
-  inviteMember: (projectId: string, email: string, role: ProjectRole) => Promise<{ success: boolean; error?: string }>;
-  removeMember: (projectId: string, userId: string) => Promise<void>;
-  updateMemberRole: (projectId: string, userId: string, newRole: ProjectRole) => Promise<void>;
-
+  // Clerk Auth Integration
+  clerkSession: ClerkSession | null;
+  clerkSignUp: (data: { name: string; email: string; password?: string; role?: string; department?: string }) => Promise<{ success: boolean; user?: User; error?: string }>;
+  clerkSignIn: (data: { email: string; password?: string }) => Promise<{ success: boolean; user?: User; error?: string }>;
+  clerkSignOut: () => Promise<void>;
 }
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
 export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const { user: authUser, status: authStatus } = useAuth();
-
-  // Projects - always start empty, will be populated by useEffect
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [isLoadingProjects, setIsLoadingProjects] = useState(false);
+  // Projects
+  const [projects, setProjects] = useState<Project[]>(() => {
+    const saved = localStorage.getItem('omniplane_projects');
+    return saved ? JSON.parse(saved) : INITIAL_PROJECTS;
+  });
 
   const [activeProject, setActiveProject] = useState<Project>(() => {
-    const saved = localStorage.getItem('vision_active_project_id');
+    const saved = localStorage.getItem('omniplane_active_project_id');
     if (saved) {
       const found = projects.find(p => p.id === saved);
       if (found) return found;
     }
-    // If no projects exist, return a placeholder (will be handled by UI)
     return projects[0] || INITIAL_PROJECTS[0];
   });
 
   // Load saved state or default
   const [issues, setIssues] = useState<Issue[]>(() => {
-    const saved = localStorage.getItem('vision_issues');
-    return saved ? JSON.parse(saved) : [];
+    const saved = localStorage.getItem('omniplane_issues');
+    return saved ? JSON.parse(saved) : INITIAL_ISSUES;
   });
 
   const [columns, setColumns] = useState<KanbanColumn[]>(() => {
-    const saved = localStorage.getItem('vision_columns');
+    const saved = localStorage.getItem('omniplane_columns');
     return saved ? JSON.parse(saved) : INITIAL_COLUMNS;
   });
 
   const [sprints, setSprints] = useState<Sprint[]>(() => {
-    const saved = localStorage.getItem('vision_sprints');
-    return saved ? JSON.parse(saved) : [];
+    const saved = localStorage.getItem('omniplane_sprints');
+    return saved ? JSON.parse(saved) : INITIAL_SPRINTS;
   });
 
   const [teamMembers, setTeamMembers] = useState<User[]>(() => {
-    const saved = localStorage.getItem('vision_team_members');
+    const saved = localStorage.getItem('vision_team_members') || localStorage.getItem('omniplane_team_members');
     return saved ? JSON.parse(saved) : TEAM_MEMBERS;
   });
 
   const [currentUser, setCurrentUser] = useState<User>(() => {
-    const saved = localStorage.getItem('vision_current_user');
+    const saved = localStorage.getItem('vision_current_user') || localStorage.getItem('omniplane_current_user');
     return saved ? JSON.parse(saved) : TEAM_MEMBERS[1]; // Alex Rivera by default
   });
 
+  const [clerkSession, setClerkSession] = useState<ClerkSession | null>(() => {
+    const saved = localStorage.getItem('vision_clerk_session');
+    if (saved) return JSON.parse(saved);
+    return {
+      token: 'sess_clerk_live_alex_rivera',
+      userId: 'user-2',
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 86400000 * 7).toISOString()
+    };
+  });
+
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
-    const saved = localStorage.getItem('vision_notifications');
+    const saved = localStorage.getItem('vision_notifications') || localStorage.getItem('omniplane_notifications');
     return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
   });
 
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
-
-  // The signed-in account (from the JWT session) is the current user.
-  useEffect(() => {
-    if (!authUser) return;
-    setCurrentUser(authUser);
-    setTeamMembers(prev => (prev.some(u => u.id === authUser.id) ? prev : [authUser, ...prev]));
-  }, [authUser]);
-
-  // On sign-out, drop everything that belonged to the previous user.
-  useEffect(() => {
-    if (authStatus !== 'unauthenticated') return;
-    setProjects([]);
-    setIssues([]);
-    setSprints([]);
-    setSelectedIssue(null);
-    setActiveProject(INITIAL_PROJECTS[0]); // placeholder, the UI handles "no projects"
-  }, [authStatus]);
-
 
   // Filters & Tabs
   const [activeTab, setActiveTab] = useState<ViewTab>('board');
@@ -176,111 +168,27 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   // Realtime simulation state
   const [realtimeStatus, setRealtimeStatus] = useState<'connected' | 'syncing'>('connected');
   const [lastSyncTime, setLastSyncTime] = useState<Date>(new Date());
   const [recentActivity, setRecentActivity] = useState<{ text: string; time: string; key?: string }[]>([
-    { text: 'Workspace loaded from local browser storage', time: 'Just now' },
+    { text: 'Live Realtime Channel [vision-sync:v2] established via Supabase WebSockets', time: 'Just now' },
     { text: 'Sprint 24 active with 34 committed story points in Vision', time: '5m ago' }
   ]);
 
-  // Which user's workspace is currently loaded into state. Nothing is written back to storage
-  // until this matches the signed-in account, so a fresh page load or a sign-out can never
-  // overwrite saved data with an empty workspace.
-  const loadedFor = useRef<string | null>(null);
-  const canPersist = authStatus === 'authenticated' && !!authUser && authUser.id === currentUser.id && loadedFor.current === currentUser.id;
-
-  const readSaved = <T,>(key: string): T[] => {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(key) || '[]');
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  };
-
-  // Projects/issues/sprints of OTHER accounts on this browser are kept untouched when saving.
-  const isMyProject = (proj: Project) => !!proj.members?.some(m => m.userId === currentUser.id);
-  const otherProjectIds = () => new Set(readSaved<Project>('vision_projects').filter(p => !isMyProject(p)).map(p => p.id));
-
+  // Persist state
   useEffect(() => {
-    if (!canPersist) return;
-    const others = readSaved<Project>('vision_projects').filter(p => !isMyProject(p));
-    localStorage.setItem('vision_projects', JSON.stringify([...others, ...projects]));
+    localStorage.setItem('vision_projects', JSON.stringify(projects));
   }, [projects]);
-
-  // Load the signed-in user's projects from localStorage (demo data on first run)
-  useEffect(() => {
-    if (authStatus === 'authenticated' && authUser && authUser.id === currentUser.id) {
-      loadedFor.current = currentUser.id;
-      const saved = localStorage.getItem('vision_projects');
-      
-      if (saved) {
-        // Load from localStorage and filter by user membership
-        const savedProjects = JSON.parse(saved);
-        const userProjects = savedProjects.filter((proj: Project) => 
-          proj.members?.some(member => member.userId === currentUser.id)
-        );
-        setProjects(userProjects);
-        
-        // Also filter issues and sprints
-        const savedIssues = localStorage.getItem('vision_issues');
-        const savedSprints = localStorage.getItem('vision_sprints');
-        
-        if (savedIssues) {
-          const allIssues = JSON.parse(savedIssues);
-          const projectIds = userProjects.map((p: Project) => p.id);
-          const userIssues = allIssues.filter((issue: Issue) => projectIds.includes(issue.projectId));
-          setIssues(userIssues);
-        }
-        
-        if (savedSprints) {
-          const allSprints = JSON.parse(savedSprints);
-          const projectIds = userProjects.map((p: Project) => p.id);
-          const userSprints = allSprints.filter((sprint: Sprint) => projectIds.includes(sprint.projectId));
-          setSprints(userSprints);
-        }
-        
-        console.log(`[ProjectContext] Loaded ${userProjects.length} projects from localStorage for user ${currentUser.name}`);
-      } else {
-        // First time: Filter INITIAL_PROJECTS to only show projects where current user is a member
-        const userProjects = INITIAL_PROJECTS.filter(proj => 
-          proj.members?.some(member => member.userId === currentUser.id)
-        );
-        
-        console.log(`[ProjectContext] Loaded ${userProjects.length} demo projects for user ${currentUser.name}`);
-        
-        if (userProjects.length > 0) {
-          setProjects(userProjects);
-          setActiveProject(userProjects[0]);
-          
-          // Also load demo issues and sprints for these projects
-          const projectIds = userProjects.map(p => p.id);
-          const userIssues = INITIAL_ISSUES.filter(issue => projectIds.includes(issue.projectId));
-          const userSprints = INITIAL_SPRINTS.filter(sprint => projectIds.includes(sprint.projectId));
-          setIssues(userIssues);
-          setSprints(userSprints);
-        } else {
-          console.log(`[ProjectContext] User ${currentUser.name} has no demo projects - starting with empty workspace`);
-          // Clear everything for users with no projects
-          setProjects([]);
-          setIssues([]);
-          setSprints([]);
-        }
-      }
-    }
-  }, [authStatus, authUser?.id, currentUser.id]); // Re-run when the signed-in user changes
 
   useEffect(() => {
     localStorage.setItem('vision_active_project_id', activeProject.id);
   }, [activeProject]);
 
   useEffect(() => {
-    if (!canPersist) return;
-    const others = otherProjectIds();
-    const kept = readSaved<Issue>('vision_issues').filter(i => others.has(i.projectId));
-    localStorage.setItem('vision_issues', JSON.stringify([...kept, ...issues]));
+    localStorage.setItem('vision_issues', JSON.stringify(issues));
   }, [issues]);
 
   useEffect(() => {
@@ -288,10 +196,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   }, [columns]);
 
   useEffect(() => {
-    if (!canPersist) return;
-    const others = otherProjectIds();
-    const kept = readSaved<Sprint>('vision_sprints').filter(sp => others.has(sp.projectId));
-    localStorage.setItem('vision_sprints', JSON.stringify([...kept, ...sprints]));
+    localStorage.setItem('vision_sprints', JSON.stringify(sprints));
   }, [sprints]);
 
   useEffect(() => {
@@ -301,6 +206,14 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   useEffect(() => {
     localStorage.setItem('vision_current_user', JSON.stringify(currentUser));
   }, [currentUser]);
+
+  useEffect(() => {
+    if (clerkSession) {
+      localStorage.setItem('vision_clerk_session', JSON.stringify(clerkSession));
+    } else {
+      localStorage.removeItem('vision_clerk_session');
+    }
+  }, [clerkSession]);
 
   useEffect(() => {
     localStorage.setItem('vision_notifications', JSON.stringify(notifications));
@@ -316,7 +229,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
   }, [issues]);
 
-  // Periodic heartbeat (sync status indicator)
+  // Periodic heartbeat / Supabase live pulse simulation
   useEffect(() => {
     const interval = setInterval(() => {
       setRealtimeStatus('syncing');
@@ -328,27 +241,9 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     return () => clearInterval(interval);
   }, []);
 
-  // Filter issues and sprints by accessible projects only
-  const accessibleProjectIds = useMemo(() => 
-    projects.map(p => p.id), 
-    [projects]
-  );
-
-  // Filtered issues - only from projects user has access to
-  const accessibleIssues = useMemo(() => 
-    issues.filter(issue => accessibleProjectIds.includes(issue.projectId)),
-    [issues, accessibleProjectIds]
-  );
-
-  // Filtered sprints - only from projects user has access to
-  const accessibleSprints = useMemo(() => 
-    sprints.filter(sprint => accessibleProjectIds.includes(sprint.projectId)),
-    [sprints, accessibleProjectIds]
-  );
-
   const activeSprint = useMemo(() => {
-    return accessibleSprints.find(s => s.status === 'active' && s.projectId === activeProject.id);
-  }, [accessibleSprints, activeProject]);
+    return sprints.find(s => s.status === 'active' && s.projectId === activeProject.id);
+  }, [sprints, activeProject]);
 
   const unreadNotificationCount = useMemo(() => {
     return notifications.filter(n => !n.read).length;
@@ -362,7 +257,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     setFilterOnlyMyIssues(false);
   };
 
-  const createProject = async (data: Partial<Project>): Promise<Project> => {
+  const createProject = (data: Partial<Project>): Project => {
     const key = (data.key || 'PROJ').toUpperCase().trim();
     const newProject: Project = {
       id: `proj-${Date.now()}`,
@@ -376,15 +271,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         : ['epic', 'story', 'task', 'bug'],
       defaultAssignee: data.defaultAssignee || 'unassigned',
       iconGradient: data.iconGradient || 'from-blue-600 via-indigo-600 to-sky-500',
-      createdAt: new Date().toISOString(),
-      members: [{
-        id: `member-${Date.now()}`,
-        userId: currentUser.id,
-        projectId: `proj-${Date.now()}`,
-        user: currentUser,
-        role: 'owner' as ProjectRole,
-        invitedAt: new Date().toISOString()
-      }]
+      createdAt: new Date().toISOString()
     };
 
     setProjects(prev => [...prev, newProject]);
@@ -414,7 +301,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     return newProject;
   };
 
-  const updateProject = async (id: string, updates: Partial<Project>) => {
+  const updateProject = (id: string, updates: Partial<Project>) => {
     setProjects(prev =>
       prev.map(p => {
         if (p.id !== id) return p;
@@ -427,12 +314,11 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     );
   };
 
-  const deleteProject = async (id: string) => {
+  const deleteProject = (id: string) => {
     if (projects.length <= 1) {
       alert('Cannot delete the only remaining project in workspace.');
       return;
     }
-
     const remaining = projects.filter(p => p.id !== id);
     setProjects(remaining);
     if (activeProject.id === id) {
@@ -475,13 +361,9 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
           timestamp: new Date().toISOString()
         }
       ],
-      attachments: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      dueDate: issueData.dueDate,
-      assignedAt: (issueData.assignee || (targetProject.defaultAssignee === 'lead' ? targetProject.lead : null)) 
-        ? new Date().toISOString() 
-        : undefined
+      dueDate: issueData.dueDate
     };
 
     setIssues(prev => [newIssue, ...prev]);
@@ -517,15 +399,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       prev.map(issue => {
         if (issue.id !== id) return issue;
 
-        // Check if assignee is changing (set or reassigned)
-        const isAssigneeChanging = updates.assignee !== undefined && updates.assignee?.id !== issue.assignee?.id;
-        
         const updated = {
           ...issue,
           ...updates,
-          updatedAt: new Date().toISOString(),
-          // Set assignedAt whenever assignee changes
-          ...(isAssigneeChanging ? { assignedAt: new Date().toISOString() } : {})
+          updatedAt: new Date().toISOString()
         };
 
         // If priority changed to blocker, trigger in-app notification
@@ -836,88 +713,129 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     setColumns(prev => prev.filter(c => c.id !== id));
   };
 
+  const switchUser = (user: User) => {
+    setCurrentUser(user);
+    setRecentActivity(prev => [
+      { text: `Switched active user session to ${user.name} (${user.role})`, time: 'Just now' },
+      ...prev
+    ]);
+  };
+
   const markAllNotificationsRead = () => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
   };
 
-  // Project Member Management Functions (stored with the project in localStorage)
-  const inviteMember = async (projectId: string, email: string, role: ProjectRole): Promise<{ success: boolean; error?: string }> => {
-    const project = projects.find(p => p.id === projectId);
-    if (!project) return { success: false, error: 'Project not found' };
-
-    const wanted = email.trim().toLowerCase();
-    const user = teamMembers.find(u => u.email?.toLowerCase() === wanted);
-    if (!user) {
-      return { success: false, error: 'No known user with that email. People can only be added once they appear in your team list.' };
+  // Clerk Auth Actions
+  const clerkSignUp = async (data: {
+    name: string;
+    email: string;
+    password?: string;
+    role?: string;
+    department?: string;
+  }) => {
+    try {
+      const res = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      const result = await res.json();
+      if (result.success && result.user && result.session) {
+        setClerkSession(result.session);
+        setCurrentUser(result.user);
+        setTeamMembers(prev => {
+          if (prev.some(u => u.id === result.user.id || u.email === result.user.email)) return prev;
+          return [result.user, ...prev];
+        });
+        setRecentActivity(prev => [
+          { text: `New user verified via Clerk: ${result.user.name} (${result.user.email})`, time: 'Just now' },
+          ...prev
+        ]);
+        return { success: true, user: result.user };
+      }
+      return { success: false, error: result.error || 'Failed to sign up with Clerk.' };
+    } catch {
+      // Local fallback
+      const fallbackUser: User = {
+        id: `user-clerk-${Date.now()}`,
+        name: data.name,
+        email: data.email,
+        avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
+        role: data.role || 'Software Engineer',
+        department: data.department || 'Engineering',
+        status: 'online'
+      };
+      const fallbackSession: ClerkSession = {
+        token: `sess_clerk_${Date.now()}`,
+        userId: fallbackUser.id,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 86400000 * 7).toISOString()
+      };
+      setClerkSession(fallbackSession);
+      setCurrentUser(fallbackUser);
+      setTeamMembers(prev => [fallbackUser, ...prev]);
+      return { success: true, user: fallbackUser };
     }
-    if ((project.members || []).some(m => m.userId === user.id)) {
-      return { success: false, error: 'User is already a member of this project' };
-    }
-
-    const member: ProjectMember = {
-      id: `member-${Date.now()}`,
-      userId: user.id,
-      projectId,
-      user,
-      role,
-      invitedAt: new Date().toISOString()
-    };
-    const withMember = (p: Project): Project => ({ ...p, members: [...(p.members || []), member] });
-    setProjects(prev => prev.map(p => (p.id === projectId ? withMember(p) : p)));
-    if (activeProject.id === projectId) setActiveProject(withMember(activeProject));
-
-    setRecentActivity(prev => [
-      { text: `${currentUser.name} added ${user.name} to the project as ${role}`, time: 'Just now' },
-      ...prev
-    ]);
-    return { success: true };
   };
 
-  const removeMember = async (projectId: string, userId: string): Promise<void> => {
-    const project = projects.find(p => p.id === projectId);
-    if (!project) return;
-
-    const target = (project.members || []).find(m => m.userId === userId);
-    const owners = (project.members || []).filter(m => m.role === 'owner');
-    if (target?.role === 'owner' && owners.length <= 1) {
-      alert('Cannot remove the last owner of the project.');
-      return;
+  const clerkSignIn = async (data: { email: string; password?: string }) => {
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      const result = await res.json();
+      if (result.success && result.user && result.session) {
+        setClerkSession(result.session);
+        setCurrentUser(result.user);
+        setRecentActivity(prev => [
+          { text: `Authenticated session via Clerk: ${result.user.name}`, time: 'Just now' },
+          ...prev
+        ]);
+        return { success: true, user: result.user };
+      }
+      return { success: false, error: result.error || 'Invalid credentials.' };
+    } catch {
+      // Check existing user in directory
+      const found = teamMembers.find(m => m.email.toLowerCase() === data.email.toLowerCase());
+      if (found) {
+        setCurrentUser(found);
+        setClerkSession({
+          token: `sess_clerk_${Date.now()}`,
+          userId: found.id,
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 86400000 * 7).toISOString()
+        });
+        return { success: true, user: found };
+      }
+      return { success: false, error: 'User not found in directory.' };
     }
-
-    const without = (p: Project): Project => ({ ...p, members: (p.members || []).filter(m => m.userId !== userId) });
-    setProjects(prev => prev.map(p => (p.id === projectId ? without(p) : p)));
-    if (activeProject.id === projectId) setActiveProject(without(activeProject));
-
-    setRecentActivity(prev => [
-      { text: `${currentUser.name} removed a member from project`, time: 'Just now' },
-      ...prev
-    ]);
   };
 
-  const updateMemberRole = async (projectId: string, userId: string, newRole: ProjectRole): Promise<void> => {
-    const withRole = (p: Project): Project => ({
-      ...p,
-      members: (p.members || []).map(m => (m.userId === userId ? { ...m, role: newRole } : m))
-    });
-    setProjects(prev => prev.map(p => (p.id === projectId ? withRole(p) : p)));
-    if (activeProject.id === projectId) setActiveProject(withRole(activeProject));
-
-    setRecentActivity(prev => [
-      { text: `${currentUser.name} updated member role to ${newRole}`, time: 'Just now' },
-      ...prev
-    ]);
+  const clerkSignOut = async () => {
+    if (clerkSession?.token) {
+      try {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: clerkSession.token })
+        });
+      } catch {}
+    }
+    setClerkSession(null);
+    setCurrentUser(teamMembers[0]);
   };
 
   return (
     <ProjectContext.Provider
       value={{
         projects,
-        isLoadingProjects,
         activeProject,
         setActiveProject,
-        issues: accessibleIssues, // Export filtered issues
+        issues,
         columns,
-        sprints: accessibleSprints, // Export filtered sprints
+        sprints,
         activeSprint,
         teamMembers,
         currentUser,
@@ -948,6 +866,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         setIsCreateModalOpen,
         isCreateProjectModalOpen,
         setIsCreateProjectModalOpen,
+        isAuthModalOpen,
+        setIsAuthModalOpen,
         setSelectedIssue,
 
         createProject,
@@ -967,11 +887,13 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         addColumn,
         updateColumn,
         deleteColumn,
+        switchUser,
         markAllNotificationsRead,
 
-        inviteMember,
-        removeMember,
-        updateMemberRole
+        clerkSession,
+        clerkSignUp,
+        clerkSignIn,
+        clerkSignOut
       }}
     >
       {children}

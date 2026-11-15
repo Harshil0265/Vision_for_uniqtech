@@ -2,8 +2,6 @@ export type WorkItemType = 'epic' | 'story' | 'task' | 'bug' | 'spike' | 'subtas
 
 export type Priority = 'blocker' | 'high' | 'medium' | 'low' | 'lowest';
 
-export type ProjectRole = 'owner' | 'admin' | 'member' | 'viewer';
-
 export interface User {
   id: string;
   name: string;
@@ -12,16 +10,6 @@ export interface User {
   role: string;
   department: string;
   status: 'online' | 'busy' | 'away' | 'offline';
-}
-
-export interface ProjectMember {
-  id: string;
-  userId: string;
-  projectId: string;
-  user: User;
-  role: ProjectRole;
-  invitedBy?: string;
-  invitedAt: string;
 }
 
 export interface Subtask {
@@ -65,17 +53,6 @@ export interface Project {
   defaultAssignee: 'unassigned' | 'lead';
   iconGradient: string;
   createdAt: string;
-  members?: ProjectMember[];
-}
-
-export interface Attachment {
-  id: string;
-  filename: string;
-  size: number;
-  mimeType: string;
-  url: string;
-  uploadedBy: User;
-  uploadedAt: string;
 }
 
 export interface Issue {
@@ -97,9 +74,7 @@ export interface Issue {
   subtasks: Subtask[];
   comments: CommentItem[];
   activities: ActivityItem[];
-  attachments?: Attachment[];
   dueDate?: string;
-  assignedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -123,9 +98,16 @@ export interface AppNotification {
   message: string;
   timestamp: string;
   read: boolean;
-  type: 'assignment' | 'mention' | 'priority' | 'sprint' | 'status' | 'warning';
+  type: 'assignment' | 'mention' | 'priority' | 'sprint' | 'status';
   issueKey?: string;
   author?: User;
+}
+
+export interface ClerkSession {
+  token: string;
+  userId: string;
+  createdAt: string;
+  expiresAt: string;
 }
 
 export type ViewTab =

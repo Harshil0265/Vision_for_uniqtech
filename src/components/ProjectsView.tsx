@@ -2,8 +2,6 @@ import React, { useState } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { Project } from '../types';
 import { WorkItemIcon } from './WorkItemIcon';
-import { InviteMemberModal } from './InviteMemberModal';
-import { canInviteMembers } from '../utils/permissions';
 import {
   FolderKanban,
   Plus,
@@ -15,34 +13,24 @@ import {
   CheckCircle2,
   ShieldCheck,
   Layers,
-  Kanban,
-  UserPlus,
-  Users
+  Kanban
 } from 'lucide-react';
 
 export const ProjectsView: React.FC = () => {
   const {
     projects,
-    isLoadingProjects,
     activeProject,
     setActiveProject,
     issues,
     sprints,
     setIsCreateProjectModalOpen,
     setActiveTab,
-    deleteProject,
-    currentUser
+    deleteProject
   } = useProject();
 
   const [projectSearch, setProjectSearch] = useState('');
-  const [inviteModalProject, setInviteModalProject] = useState<Project | null>(null);
 
-  // Additional safeguard: only show projects where current user is a member
-  const userProjects = projects.filter(p => 
-    p.members?.some(m => m.userId === currentUser.id)
-  );
-
-  const filteredProjects = userProjects.filter(p => {
+  const filteredProjects = projects.filter(p => {
     if (!projectSearch.trim()) return true;
     const q = projectSearch.toLowerCase();
     return p.name.toLowerCase().includes(q) || p.key.toLowerCase().includes(q) || p.description.toLowerCase().includes(q);
@@ -51,11 +39,6 @@ export const ProjectsView: React.FC = () => {
   const handleSelectProject = (project: Project) => {
     setActiveProject(project);
     setActiveTab('board');
-  };
-
-  const getCurrentUserRole = (project: Project) => {
-    const member = project.members?.find(m => m.userId === currentUser.id);
-    return member?.role || 'viewer';
   };
 
   return (
@@ -95,53 +78,14 @@ export const ProjectsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Loading State */}
-      {isLoadingProjects && (
-        <div className="flex items-center justify-center py-20">
-          <div className="text-center">
-            <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-sm text-slate-600">Loading your projects...</p>
-          </div>
-        </div>
-      )}
-
-      {/* Empty State */}
-      {!isLoadingProjects && filteredProjects.length === 0 && (
-        <div className="flex items-center justify-center py-20">
-          <div className="text-center max-w-md">
-            <FolderKanban className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-slate-900 mb-2">No projects yet</h3>
-            <p className="text-sm text-slate-500 mb-6">
-              {projects.length === 0 
-                ? "Create your first project to get started with Vision project management."
-                : "No projects match your search criteria."
-              }
-            </p>
-            {projects.length === 0 && (
-              <button
-                onClick={() => setIsCreateProjectModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-sm font-semibold shadow-xs transition-all mx-auto cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Create Your First Project</span>
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Projects Grid */}
-      {!isLoadingProjects && filteredProjects.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {filteredProjects.map(proj => {
           const isActive = activeProject.id === proj.id;
           const projIssues = issues.filter(i => i.projectId === proj.id);
           const projSprints = sprints.filter(s => s.projectId === proj.id);
           const activeProjSprint = projSprints.find(s => s.status === 'active');
           const completedIssues = projIssues.filter(i => i.status === 'done').length;
-          const userRole = getCurrentUserRole(proj);
-          const canInvite = canInviteMembers(userRole);
-          const memberCount = proj.members?.length || 0;
 
           return (
             <div
@@ -178,27 +122,19 @@ export const ProjectsView: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1">
-                    {memberCount > 0 && (
-                      <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-slate-100 border border-slate-200" title="Project members">
-                        <Users className="w-3 h-3 text-slate-600" />
-                        <span className="text-xs font-semibold text-slate-700">{memberCount}</span>
-                      </div>
-                    )}
-                    {projects.length > 1 && (
-                      <button
-                        onClick={() => {
-                          if (confirm(`Delete project "${proj.name}" and all its issues?`)) {
-                            deleteProject(proj.id);
-                          }
-                        }}
-                        className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-100 cursor-pointer"
-                        title="Delete project"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
+                  {projects.length > 1 && (
+                    <button
+                      onClick={() => {
+                        if (confirm(`Delete project "${proj.name}" and all its issues?`)) {
+                          deleteProject(proj.id);
+                        }
+                      }}
+                      className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-100 cursor-pointer"
+                      title="Delete project"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
 
                 {/* Description */}
@@ -241,55 +177,35 @@ export const ProjectsView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Footer: Lead, Invite & Switch Action */}
-              <div className="pt-3 border-t border-slate-100 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <img
-                      src={proj.lead.avatar}
-                      alt={proj.lead.name}
-                      className="w-5 h-5 rounded-full object-cover ring-1 ring-slate-200"
-                    />
-                    <div className="text-[11px] text-slate-600 truncate max-w-[120px]">
-                      Lead: <span className="font-medium text-slate-800">{proj.lead.name.split(' ')[0]}</span>
-                    </div>
+              {/* Footer: Lead & Switch Action */}
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <img
+                    src={proj.lead.avatar}
+                    alt={proj.lead.name}
+                    className="w-5 h-5 rounded-full object-cover ring-1 ring-slate-200"
+                  />
+                  <div className="text-[11px] text-slate-600 truncate max-w-[120px]">
+                    Lead: <span className="font-medium text-slate-800">{proj.lead.name.split(' ')[0]}</span>
                   </div>
-
-                  <button
-                    onClick={() => handleSelectProject(proj)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                      isActive
-                        ? 'bg-blue-600 text-white shadow-2xs'
-                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                    }`}
-                  >
-                    <span>{isActive ? 'View Board' : 'Switch Project'}</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
                 </div>
 
-                {canInvite && (
-                  <button
-                    onClick={() => setInviteModalProject(proj)}
-                    className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-50 to-blue-50 hover:from-indigo-100 hover:to-blue-100 border border-indigo-200/60 text-indigo-700 text-xs font-semibold transition-all cursor-pointer"
-                  >
-                    <UserPlus className="w-3.5 h-3.5" />
-                    <span>Invite Members</span>
-                  </button>
-                )}
+                <button
+                  onClick={() => handleSelectProject(proj)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    isActive
+                      ? 'bg-blue-600 text-white shadow-2xs'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  <span>{isActive ? 'View Board' : 'Switch Project'}</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
               </div>
             </div>
           );
         })}
       </div>
-      )}
-
-      {/* Invite Member Modal */}
-      <InviteMemberModal
-        project={inviteModalProject}
-        isOpen={inviteModalProject !== null}
-        onClose={() => setInviteModalProject(null)}
-      />
     </div>
   );
 };

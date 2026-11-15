@@ -1,8 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { WorkItemIcon, PriorityIcon } from './WorkItemIcon';
 import { Priority } from '../types';
-import { getUserRoleInProject, canEditIssue, canDeleteProject } from '../utils/permissions';
 import {
   X,
   Trash2,
@@ -10,14 +9,7 @@ import {
   MessageSquare,
   History,
   Send,
-  AtSign,
-  Eye,
-  Paperclip,
-  Download,
-  Upload,
-  File,
-  FileText,
-  Image as ImageIcon
+  AtSign
 } from 'lucide-react';
 
 export const IssueDetailModal: React.FC = () => {
@@ -29,7 +21,6 @@ export const IssueDetailModal: React.FC = () => {
     activeProject,
     teamMembers,
     sprints,
-    currentUser,
     updateIssue,
     deleteIssue,
     moveIssueStatus,
@@ -43,12 +34,6 @@ export const IssueDetailModal: React.FC = () => {
   const issueProject = projects.find(p => p.id === selectedIssue.projectId) || activeProject;
   const allowedTypes = issueProject.allowedIssueTypes || ['epic', 'story', 'task', 'bug'];
 
-  // Get user's role in the project
-  const userRole = getUserRoleInProject(issueProject, currentUser.id);
-  const canEdit = userRole ? canEditIssue(userRole) : false;
-  const canDelete = userRole ? canDeleteProject(userRole) : false;
-  const isViewer = userRole === 'viewer';
-
   const [activeTab, setActiveTab] = useState<'comments' | 'history'>('comments');
   const [commentText, setCommentText] = useState('');
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
@@ -57,17 +42,10 @@ export const IssueDetailModal: React.FC = () => {
   const [isEditingDesc, setIsEditingDesc] = useState(false);
   const [descValue, setDescValue] = useState(selectedIssue.description);
   const [mentionPickerOpen, setMentionPickerOpen] = useState(false);
-  // Attachments are stored on the issue itself (browser localStorage), so there is no upload API.
-  const attachments = selectedIssue.attachments || [];
-  const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
 
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleTitleBlur = () => {
-    if (!canEdit) return;
     setIsEditingTitle(false);
     if (titleValue.trim() && titleValue !== selectedIssue.title) {
       updateIssue(selectedIssue.id, { title: titleValue.trim() });
@@ -75,7 +53,6 @@ export const IssueDetailModal: React.FC = () => {
   };
 
   const handleDescBlur = () => {
-    if (!canEdit) return;
     setIsEditingDesc(false);
     if (descValue !== selectedIssue.description) {
       updateIssue(selectedIssue.id, { description: descValue });
@@ -84,7 +61,6 @@ export const IssueDetailModal: React.FC = () => {
 
   const handleAddSubtaskSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canEdit) return;
     if (newSubtaskTitle.trim()) {
       addSubtask(selectedIssue.id, newSubtaskTitle.trim());
       setNewSubtaskTitle('');
@@ -93,7 +69,6 @@ export const IssueDetailModal: React.FC = () => {
 
   const handleCommentSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canEdit) return;
     if (commentText.trim()) {
       addComment(selectedIssue.id, commentText.trim());
       setCommentText('');
@@ -107,93 +82,6 @@ export const IssueDetailModal: React.FC = () => {
     if (commentInputRef.current) {
       commentInputRef.current.focus();
     }
-  };
-
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    
-    for (let i = 0; i < files.length; i++) {
-      await uploadFile(files[i]);
-    }
-    
-    // Reset input
-    e.target.value = '';
-  };
-
-  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(false);
-    
-    const files = e.dataTransfer.files;
-    if (!files || files.length === 0) return;
-    
-    for (let i = 0; i < files.length; i++) {
-      await uploadFile(files[i]);
-    }
-  };
-
-  const readAsDataUrl = (file: File) =>
-    new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(reader.error || new Error('Could not read file'));
-      reader.readAsDataURL(file);
-    });
-
-  const uploadFile = async (file: File) => {
-    if (!canEdit) {
-      alert('You do not have permission to upload attachments');
-      return;
-    }
-
-    // Files are kept in the browser's localStorage, which is small, so the limit is low.
-    const maxSize = 1024 * 1024; // 1 MB
-    if (file.size > maxSize) {
-      alert(`File "${file.name}" is too large. Maximum size is 1 MB.`);
-      return;
-    }
-
-    setIsUploadingAttachment(true);
-    setUploadProgress(0);
-
-    try {
-      const url = await readAsDataUrl(file);
-      const attachment = {
-        id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        filename: file.name,
-        size: file.size,
-        mimeType: file.type || 'application/octet-stream',
-        url,
-        uploadedBy: currentUser,
-        uploadedAt: new Date().toISOString()
-      };
-      updateIssue(selectedIssue.id, { attachments: [attachment, ...attachments] });
-      setUploadProgress(100);
-    } catch (error: any) {
-      console.error('Upload error:', error);
-      alert(error.message || 'Failed to upload file');
-    } finally {
-      setIsUploadingAttachment(false);
-      setUploadProgress(0);
-    }
-  };
-
-  const handleDeleteAttachment = (attachmentId: string) => {
-    if (!confirm('Are you sure you want to delete this attachment?')) return;
-    updateIssue(selectedIssue.id, { attachments: attachments.filter(a => a.id !== attachmentId) });
-  };
-
-  const getFileIcon = (mimeType: string, filename: string) => {
-    if (mimeType.startsWith('image/')) return <ImageIcon className="w-4 h-4" />;
-    if (mimeType === 'application/pdf') return <FileText className="w-4 h-4" />;
-    return <File className="w-4 h-4" />;
-  };
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
   const subtasksCompleted = selectedIssue.subtasks.filter(s => s.completed).length;
@@ -217,40 +105,20 @@ export const IssueDetailModal: React.FC = () => {
             <span className="text-xs text-slate-600 font-medium">
               {selectedIssue.epicTitle || 'Sprint Item'}
             </span>
-            {/* Role Badge */}
-            {userRole && (
-              <span
-                className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded font-semibold border ${
-                  userRole === 'owner'
-                    ? 'bg-purple-50 text-purple-700 border-purple-200'
-                    : userRole === 'admin'
-                    ? 'bg-blue-50 text-blue-700 border-blue-200'
-                    : userRole === 'member'
-                    ? 'bg-green-50 text-green-700 border-green-200'
-                    : 'bg-slate-100 text-slate-600 border-slate-300'
-                }`}
-                title={`Your role: ${userRole}`}
-              >
-                {userRole === 'viewer' && <Eye className="w-2.5 h-2.5 inline mr-0.5" />}
-                {userRole}
-              </span>
-            )}
           </div>
 
           <div className="flex items-center gap-2">
-            {canDelete && (
-              <button
-                onClick={() => {
-                  if (confirm(`Are you sure you want to delete ${selectedIssue.key}?`)) {
-                    deleteIssue(selectedIssue.id);
-                  }
-                }}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-slate-100 transition-colors cursor-pointer"
-                title="Delete issue (Admin/Owner only)"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
+            <button
+              onClick={() => {
+                if (confirm(`Are you sure you want to delete ${selectedIssue.key}?`)) {
+                  deleteIssue(selectedIssue.id);
+                }
+              }}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              title="Delete issue"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
             <button
               onClick={() => setSelectedIssue(null)}
               className="p-1.5 rounded-lg text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
@@ -267,7 +135,7 @@ export const IssueDetailModal: React.FC = () => {
           <div className="flex-1 p-6 space-y-6 overflow-y-auto border-b lg:border-b-0 lg:border-r border-slate-200 bg-white">
             {/* Title */}
             <div>
-              {isEditingTitle && canEdit ? (
+              {isEditingTitle ? (
                 <input
                   type="text"
                   value={titleValue}
@@ -278,11 +146,9 @@ export const IssueDetailModal: React.FC = () => {
                 />
               ) : (
                 <h2
-                  onClick={() => canEdit && setIsEditingTitle(true)}
-                  className={`text-base font-semibold text-slate-900 p-1.5 -ml-1.5 rounded-lg transition-colors ${
-                    canEdit ? 'hover:bg-slate-50 cursor-pointer' : 'cursor-default'
-                  }`}
-                  title={canEdit ? 'Click to edit title' : 'Read-only (viewer role)'}
+                  onClick={() => setIsEditingTitle(true)}
+                  className="text-base font-semibold text-slate-900 hover:bg-slate-50 p-1.5 -ml-1.5 rounded-lg cursor-pointer transition-colors"
+                  title="Click to edit title"
                 >
                   {selectedIssue.title}
                 </h2>
@@ -294,7 +160,7 @@ export const IssueDetailModal: React.FC = () => {
               <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Description
               </div>
-              {isEditingDesc && canEdit ? (
+              {isEditingDesc ? (
                 <div className="space-y-2">
                   <textarea
                     value={descValue}
@@ -319,11 +185,9 @@ export const IssueDetailModal: React.FC = () => {
                 </div>
               ) : (
                 <div
-                  onClick={() => canEdit && setIsEditingDesc(true)}
-                  className={`p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700 leading-relaxed transition-colors whitespace-pre-wrap min-h-[60px] ${
-                    canEdit ? 'hover:bg-slate-100/60 cursor-pointer' : 'cursor-default'
-                  }`}
-                  title={canEdit ? 'Click to edit description' : 'Read-only (viewer role)'}
+                  onClick={() => setIsEditingDesc(true)}
+                  className="p-3.5 bg-slate-50 hover:bg-slate-100/60 rounded-xl border border-slate-200 text-xs text-slate-700 leading-relaxed cursor-pointer transition-colors whitespace-pre-wrap min-h-[60px]"
+                  title="Click to edit description"
                 >
                   {selectedIssue.description || 'No description provided. Click to add details, technical requirements, or acceptance criteria.'}
                 </div>
@@ -361,19 +225,14 @@ export const IssueDetailModal: React.FC = () => {
                 {selectedIssue.subtasks.map(st => (
                   <div
                     key={st.id}
-                    onClick={() => canEdit && toggleSubtask(selectedIssue.id, st.id)}
-                    className={`flex items-center gap-2.5 p-2 rounded-lg bg-slate-50 border border-slate-200/80 text-xs transition-colors ${
-                      canEdit ? 'hover:bg-slate-100/80 cursor-pointer' : 'cursor-default'
-                    }`}
+                    onClick={() => toggleSubtask(selectedIssue.id, st.id)}
+                    className="flex items-center gap-2.5 p-2 rounded-lg bg-slate-50 hover:bg-slate-100/80 border border-slate-200/80 cursor-pointer text-xs transition-colors"
                   >
                     <input
                       type="checkbox"
                       checked={st.completed}
                       onChange={() => {}}
-                      disabled={!canEdit}
-                      className={`rounded border-slate-300 text-blue-600 focus:ring-0 ${
-                        canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
-                      }`}
+                      className="rounded border-slate-300 text-blue-600 focus:ring-0 cursor-pointer"
                     />
                     <span
                       className={`flex-1 ${
@@ -387,176 +246,21 @@ export const IssueDetailModal: React.FC = () => {
               </div>
 
               {/* Add subtask inline input */}
-              {canEdit ? (
-                <form onSubmit={handleAddSubtaskSubmit} className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="+ Add new subtask item..."
-                    value={newSubtaskTitle}
-                    onChange={e => setNewSubtaskTitle(e.target.value)}
-                    className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
-                  />
-                  <button
-                    type="submit"
-                    className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium border border-slate-200 cursor-pointer"
-                  >
-                    Add
-                  </button>
-                </form>
-              ) : (
-                <div className="text-[11px] text-slate-400 italic border border-dashed border-slate-200 rounded-lg p-2 text-center">
-                  Viewers cannot add subtasks
-                </div>
-              )}
-            </div>
-
-            {/* Attachments Section */}
-            <div className="space-y-3 pt-2 border-t border-slate-200">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Paperclip className="w-4 h-4 text-blue-600" />
-                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-                    File Attachments
-                  </span>
-                  {attachments.length > 0 && (
-                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 font-medium">
-                      {attachments.length}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Upload Area */}
-              {canEdit && (
-                <div
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setIsDragging(true);
-                  }}
-                  onDragLeave={() => setIsDragging(false)}
-                  onDrop={handleDrop}
-                  className={`border-2 border-dashed rounded-xl p-4 text-center transition-colors ${
-                    isDragging
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-slate-200 bg-slate-50 hover:border-slate-300'
-                  }`}
+              <form onSubmit={handleAddSubtaskSubmit} className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="+ Add new subtask item..."
+                  value={newSubtaskTitle}
+                  onChange={e => setNewSubtaskTitle(e.target.value)}
+                  className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
+                />
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium border border-slate-200 cursor-pointer"
                 >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    accept="image/*,application/pdf,text/*,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.js,.ts,.py,.json,.xml,.yaml"
-                    onChange={handleFileSelect}
-                    className="hidden"
-                  />
-                  <Upload className="w-6 h-6 text-slate-400 mx-auto mb-2" />
-                  <p className="text-xs text-slate-600 mb-1">
-                    Drag and drop files here or{' '}
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="text-blue-600 hover:text-blue-700 font-semibold cursor-pointer"
-                    >
-                      browse files
-                    </button>
-                  </p>
-                  <p className="text-[10px] text-slate-400">
-                    Images, PDFs, documents, code files • Max 10 MB per file
-                  </p>
-                  
-                  {isUploadingAttachment && (
-                    <div className="mt-3">
-                      <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-blue-500 rounded-full transition-all duration-300"
-                          style={{ width: `${uploadProgress}%` }}
-                        />
-                      </div>
-                      <p className="text-[10px] text-slate-500 mt-1">Uploading...</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Attachments List */}
-              {attachments.length > 0 ? (
-                <div className="space-y-2">
-                  {attachments.map((att: any) => {
-                    const isImage = att.mimeType?.startsWith('image/');
-                    const canDeleteAttachment = 
-                      currentUser.id === att.uploadedBy?.id || 
-                      ['admin', 'owner'].includes(userRole || '');
-
-                    return (
-                      <div
-                        key={att.id}
-                        className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200 hover:bg-slate-100 transition-colors"
-                      >
-                        {/* File Icon/Thumbnail */}
-                        <div className="flex-shrink-0">
-                          {isImage ? (
-                            <img
-                              src={att.url}
-                              alt={att.filename}
-                              className="w-12 h-12 object-cover rounded border border-slate-200"
-                              style={{ maxHeight: '80px' }}
-                            />
-                          ) : (
-                            <div className="w-10 h-10 bg-white rounded border border-slate-200 flex items-center justify-center text-slate-500">
-                              {getFileIcon(att.mimeType || '', att.filename)}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* File Info */}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-slate-800 truncate">
-                            {att.filename}
-                          </p>
-                          <p className="text-[10px] text-slate-500">
-                            {formatFileSize(att.size)} • Uploaded by {att.uploadedBy?.name || 'Unknown'}
-                          </p>
-                          <p className="text-[10px] text-slate-400 font-mono">
-                            {new Date(att.uploadedAt).toLocaleString([], {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
-                          </p>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="flex items-center gap-1">
-                          <a
-                            href={att.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-1.5 rounded hover:bg-slate-200 text-slate-600 hover:text-blue-600 transition-colors cursor-pointer"
-                            title="Download"
-                          >
-                            <Download className="w-4 h-4" />
-                          </a>
-                          {canEdit && canDeleteAttachment && (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteAttachment(att.id)}
-                              className="p-1.5 rounded hover:bg-red-50 text-slate-600 hover:text-red-600 transition-colors cursor-pointer"
-                              title="Delete attachment"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="text-center py-3 text-xs text-slate-400 border border-dashed border-slate-200 rounded-lg">
-                  No attachments yet.{canEdit ? ' Upload files above.' : ''}
-                </div>
-              )}
+                  Add
+                </button>
+              </form>
             </div>
 
             {/* Discussion Comments & Audit Log Tabs */}
@@ -618,78 +322,70 @@ export const IssueDetailModal: React.FC = () => {
                   </div>
 
                   {/* Add comment with @mention prompt */}
-                  {canEdit ? (
-                    <form onSubmit={handleCommentSubmit} className="space-y-2 relative">
-                      <div className="relative">
-                        <textarea
-                          ref={commentInputRef}
-                          rows={2}
-                          placeholder="Write a comment... Type '@' to mention team members and get an in-app notification..."
-                          value={commentText}
-                          onChange={e => {
-                            setCommentText(e.target.value);
-                            if (e.target.value.endsWith('@')) {
-                              setMentionPickerOpen(true);
-                            }
-                          }}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
-                        />
+                  <form onSubmit={handleCommentSubmit} className="space-y-2 relative">
+                    <div className="relative">
+                      <textarea
+                        ref={commentInputRef}
+                        rows={2}
+                        placeholder="Write a comment... Type '@' to mention team members and trigger automated Nodemailer alerts..."
+                        value={commentText}
+                        onChange={e => {
+                          setCommentText(e.target.value);
+                          if (e.target.value.endsWith('@')) {
+                            setMentionPickerOpen(true);
+                          }
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
+                      />
 
-                        {/* @Mention Picker Popover */}
-                        {mentionPickerOpen && (
-                          <div className="absolute bottom-full left-0 mb-1 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-20 p-2 space-y-1">
-                            <div className="text-[10px] font-semibold text-slate-500 px-2 py-1 uppercase">
-                              Tag Team Member:
-                            </div>
-                            {teamMembers.map(m => {
-                              const handle = m.email.split('@')[0];
-                              return (
-                                <button
-                                  key={m.id}
-                                  type="button"
-                                  onClick={() => insertMention(handle)}
-                                  className="w-full flex items-center gap-2 p-1.5 rounded-lg hover:bg-slate-100 text-left text-xs transition-colors cursor-pointer"
-                                >
-                                  <img
-                                    src={m.avatar}
-                                    alt={m.name}
-                                    className="w-4 h-4 rounded-full object-cover"
-                                  />
-                                  <span className="font-semibold text-slate-800">{m.name}</span>
-                                  <span className="text-[10px] text-slate-500 font-mono">@{handle}</span>
-                                </button>
-                              );
-                            })}
+                      {/* @Mention Picker Popover */}
+                      {mentionPickerOpen && (
+                        <div className="absolute bottom-full left-0 mb-1 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-20 p-2 space-y-1">
+                          <div className="text-[10px] font-semibold text-slate-500 px-2 py-1 uppercase">
+                            Tag Team Member:
                           </div>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <button
-                          type="button"
-                          onClick={() => setMentionPickerOpen(!mentionPickerOpen)}
-                          className="flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
-                        >
-                          <AtSign className="w-3.5 h-3.5" />
-                          <span>Tag member (@)</span>
-                        </button>
-
-                        <button
-                          type="submit"
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-medium shadow-xs transition-all cursor-pointer"
-                        >
-                          <Send className="w-3 h-3" />
-                          <span>Send Comment</span>
-                        </button>
-                      </div>
-                    </form>
-                  ) : (
-                    <div className="border border-dashed border-slate-200 rounded-xl p-3 text-center">
-                      <p className="text-[11px] text-slate-400 italic">
-                        Viewers cannot add comments. Contact a project admin to request member access.
-                      </p>
+                          {teamMembers.map(m => {
+                            const handle = m.email.split('@')[0];
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                onClick={() => insertMention(handle)}
+                                className="w-full flex items-center gap-2 p-1.5 rounded-lg hover:bg-slate-100 text-left text-xs transition-colors cursor-pointer"
+                              >
+                                <img
+                                  src={m.avatar}
+                                  alt={m.name}
+                                  className="w-4 h-4 rounded-full object-cover"
+                                />
+                                <span className="font-semibold text-slate-800">{m.name}</span>
+                                <span className="text-[10px] text-slate-500 font-mono">@{handle}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-                  )}
+
+                    <div className="flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => setMentionPickerOpen(!mentionPickerOpen)}
+                        className="flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 font-medium cursor-pointer"
+                      >
+                        <AtSign className="w-3.5 h-3.5" />
+                        <span>Tag member (@)</span>
+                      </button>
+
+                      <button
+                        type="submit"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-medium shadow-xs transition-all cursor-pointer"
+                      >
+                        <Send className="w-3 h-3" />
+                        <span>Send Comment</span>
+                      </button>
+                    </div>
+                  </form>
                 </div>
               ) : (
                 /* History / Activity Log */
@@ -725,11 +421,8 @@ export const IssueDetailModal: React.FC = () => {
               </label>
               <select
                 value={selectedIssue.type}
-                onChange={e => canEdit && updateIssue(selectedIssue.id, { type: e.target.value as any })}
-                disabled={!canEdit}
-                className={`w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 capitalize font-medium shadow-2xs ${
-                  canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
-                }`}
+                onChange={e => updateIssue(selectedIssue.id, { type: e.target.value as any })}
+                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 capitalize font-medium shadow-2xs cursor-pointer"
               >
                 {allowedTypes.map(t => (
                   <option key={t} value={t}>
@@ -746,11 +439,8 @@ export const IssueDetailModal: React.FC = () => {
               </label>
               <select
                 value={selectedIssue.status}
-                onChange={e => canEdit && moveIssueStatus(selectedIssue.id, e.target.value)}
-                disabled={!canEdit}
-                className={`w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 uppercase font-mono font-medium shadow-2xs ${
-                  canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
-                }`}
+                onChange={e => moveIssueStatus(selectedIssue.id, e.target.value)}
+                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 uppercase font-mono font-medium shadow-2xs cursor-pointer"
               >
                 {columns.map(c => (
                   <option key={c.id} value={c.id}>
@@ -768,15 +458,11 @@ export const IssueDetailModal: React.FC = () => {
               <select
                 value={selectedIssue.assignee?.id || 'unassigned'}
                 onChange={e => {
-                  if (!canEdit) return;
                   const val = e.target.value;
                   const newAssignee = val === 'unassigned' ? null : teamMembers.find(m => m.id === val) || null;
                   updateIssue(selectedIssue.id, { assignee: newAssignee });
                 }}
-                disabled={!canEdit}
-                className={`w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs font-medium ${
-                  canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
-                }`}
+                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs cursor-pointer font-medium"
               >
                 <option value="unassigned">Unassigned</option>
                 {teamMembers.map(m => (
@@ -794,11 +480,8 @@ export const IssueDetailModal: React.FC = () => {
               </label>
               <select
                 value={selectedIssue.priority}
-                onChange={e => canEdit && updateIssue(selectedIssue.id, { priority: e.target.value as Priority })}
-                disabled={!canEdit}
-                className={`w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 capitalize shadow-2xs font-medium ${
-                  canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
-                }`}
+                onChange={e => updateIssue(selectedIssue.id, { priority: e.target.value as Priority })}
+                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 capitalize shadow-2xs cursor-pointer font-medium"
               >
                 <option value="blocker">Blocker (P0 Critical Alert)</option>
                 <option value="high">High (P1)</option>
@@ -818,13 +501,12 @@ export const IssueDetailModal: React.FC = () => {
                   <button
                     key={pts}
                     type="button"
-                    onClick={() => canEdit && updateIssue(selectedIssue.id, { storyPoints: pts })}
-                    disabled={!canEdit}
-                    className={`py-1 rounded font-mono text-xs font-bold border transition-all ${
+                    onClick={() => updateIssue(selectedIssue.id, { storyPoints: pts })}
+                    className={`py-1 rounded font-mono text-xs font-bold border transition-all cursor-pointer ${
                       selectedIssue.storyPoints === pts
                         ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
                         : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
-                    } ${canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}
+                    }`}
                   >
                     {pts}
                   </button>
@@ -839,11 +521,8 @@ export const IssueDetailModal: React.FC = () => {
               </label>
               <select
                 value={selectedIssue.sprintId || 'backlog'}
-                onChange={e => canEdit && updateIssue(selectedIssue.id, { sprintId: e.target.value === 'backlog' ? null : e.target.value })}
-                disabled={!canEdit}
-                className={`w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs font-medium ${
-                  canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
-                }`}
+                onChange={e => updateIssue(selectedIssue.id, { sprintId: e.target.value === 'backlog' ? null : e.target.value })}
+                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs cursor-pointer font-medium"
               >
                 {sprints.map(s => (
                   <option key={s.id} value={s.id}>
@@ -853,51 +532,6 @@ export const IssueDetailModal: React.FC = () => {
                 <option value="backlog">Product Backlog</option>
               </select>
             </div>
-
-            {/* Due Date */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                Due Date & Time
-              </label>
-              {canEdit ? (
-                <input
-                  type="datetime-local"
-                  value={selectedIssue.dueDate ? new Date(selectedIssue.dueDate).toISOString().slice(0, 16) : ''}
-                  onChange={e => updateIssue(selectedIssue.id, { dueDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs font-mono"
-                />
-              ) : (
-                <div className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-800 shadow-2xs font-mono opacity-60">
-                  {selectedIssue.dueDate 
-                    ? new Date(selectedIssue.dueDate).toLocaleString([], { 
-                        year: 'numeric', 
-                        month: 'short', 
-                        day: 'numeric', 
-                        hour: '2-digit', 
-                        minute: '2-digit' 
-                      })
-                    : 'No due date set'}
-                </div>
-              )}
-            </div>
-
-            {/* Assigned At (Read-only) */}
-            {selectedIssue.assignedAt && (
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Assigned At
-                </label>
-                <div className="w-full bg-slate-100 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-600 shadow-2xs font-mono">
-                  {new Date(selectedIssue.assignedAt).toLocaleString([], { 
-                    year: 'numeric', 
-                    month: 'short', 
-                    day: 'numeric', 
-                    hour: '2-digit', 
-                    minute: '2-digit' 
-                  })}
-                </div>
-              </div>
-            )}
 
             {/* Reporter */}
             <div className="space-y-1 pt-2 border-t border-slate-200 text-xs">
