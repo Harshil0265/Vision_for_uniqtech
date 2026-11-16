@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useProject } from '../context/ProjectContext';
+import { canEditWork, canManageProject, useProject } from '../context/ProjectContext';
 import { Sprint, Issue } from '../types';
 import { WorkItemIcon, PriorityIcon } from './WorkItemIcon';
 import {
@@ -10,7 +10,8 @@ import {
   ChevronDown,
   ChevronRight,
   Layers,
-  Check
+  Check,
+  Lock
 } from 'lucide-react';
 
 export const BacklogView: React.FC = () => {
@@ -23,8 +24,19 @@ export const BacklogView: React.FC = () => {
     createSprint,
     moveIssueSprint,
     setSelectedIssue,
-    setIsCreateModalOpen
+    setIsCreateModalOpen,
+    myRoleIn
   } = useProject();
+
+  // Members plan work; owners/admins run sprints. Viewers and non-members are read-only.
+  const myRole = myRoleIn(activeProject);
+  const canEdit = canEditWork(myRole);
+  const canManage = canManageProject(myRole);
+
+  const isoDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const [newSprintStart, setNewSprintStart] = useState(() => isoDay(new Date()));
+  const [newSprintEnd, setNewSprintEnd] = useState(() => isoDay(new Date(Date.now() + 14 * 86400000)));
+  const [sprintError, setSprintError] = useState<string | null>(null);
 
   const [collapsedSprints, setCollapsedSprints] = useState<Record<string, boolean>>({});
   const [isNewSprintFormOpen, setIsNewSprintFormOpen] = useState(false);
@@ -40,15 +52,16 @@ export const BacklogView: React.FC = () => {
 
   const handleCreateSprint = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSprintName.trim()) return;
-    createSprint(
-      newSprintName.trim(),
-      newSprintGoal.trim() || 'Sprint goals defined during planning.',
-      new Date().toISOString().split('T')[0],
-      new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]
-    );
+    const name = newSprintName.trim();
+    if (!name) return setSprintError('Enter a sprint name.');
+    if (name.length > 80) return setSprintError('Use 80 characters or fewer for the name.');
+    if (!newSprintStart || !newSprintEnd) return setSprintError('Choose a start and an end date.');
+    if (newSprintEnd <= newSprintStart) return setSprintError('The end date must be after the start date.');
+    if (projectSprints.some(s => s.name.toLowerCase() === name.toLowerCase())) return setSprintError('A sprint with this name already exists in this project.');
+    createSprint(name, newSprintGoal.trim(), newSprintStart, newSprintEnd);
     setNewSprintName('');
     setNewSprintGoal('');
+    setSprintError(null);
     setIsNewSprintFormOpen(false);
   };
 
@@ -111,9 +124,11 @@ export const BacklogView: React.FC = () => {
 
           {/* Quick Move Sprint Dropdown */}
           <select
+            disabled={!canEdit}
+            aria-label={`Move ${issue.key} to a sprint`}
             value={currentSprintId || 'backlog'}
             onChange={e => moveIssueSprint(issue.id, e.target.value === 'backlog' ? 'backlog' : e.target.value)}
-            className="bg-white border border-slate-200 text-slate-600 text-[11px] rounded px-2 py-0.5 focus:outline-none focus:border-blue-500 cursor-pointer shadow-2xs font-medium"
+            className="bg-white border border-slate-200 text-slate-600 text-[11px] rounded px-2 py-0.5 focus:outline-none focus:border-blue-500 cursor-pointer shadow-2xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
             title="Move to another Sprint"
           >
             {projectSprints.map(s => (
@@ -146,51 +161,78 @@ export const BacklogView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2.5">
-          <button
-            onClick={() => setIsNewSprintFormOpen(!isNewSprintFormOpen)}
+          {canManage && <button
+            onClick={() => { setIsNewSprintFormOpen(!isNewSprintFormOpen); setSprintError(null); }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700 shadow-2xs transition-colors cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Create Sprint</span>
-          </button>
-          <button
+          </button>}
+          {canEdit && <button
             onClick={() => setIsCreateModalOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold shadow-xs transition-all active:scale-95 cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Create Issue</span>
-          </button>
+          </button>}
         </div>
       </div>
+
+      {!canEdit && (
+        <div role="status" className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
+          <Lock className="w-3.5 h-3.5 shrink-0" />
+          {myRole === 'viewer'
+            ? 'You have view-only access to this project.'
+            : 'You are not a member of this project, so it is view-only. Ask a project admin to add you.'}
+        </div>
+      )}
 
       {/* New Sprint Quick Creator Bar */}
       {isNewSprintFormOpen && (
         <form
+          noValidate
           onSubmit={handleCreateSprint}
           className="p-4 bg-white rounded-xl border border-slate-200 shadow-xs space-y-3"
         >
-          <div className="text-xs font-semibold text-slate-900">New Sprint Definition ({activeProject.key})</div>
+          <div className="text-xs font-semibold text-slate-900">New sprint ({activeProject.key})</div>
+          {sprintError && <p role="alert" className="text-[11px] text-rose-600">{sprintError}</p>}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <input
               type="text"
               placeholder={`Sprint Name (e.g. ${activeProject.key} Sprint ${projectSprints.length + 1})`}
               value={newSprintName}
-              onChange={e => setNewSprintName(e.target.value)}
+              onChange={e => { setNewSprintName(e.target.value); setSprintError(null); }}
+              aria-label="Sprint name"
+              maxLength={80}
               className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
               required
             />
             <input
               type="text"
-              placeholder="Sprint Goal (Deliverables & Objectives)"
+              placeholder="Sprint goal (optional)"
+              aria-label="Sprint goal"
+              maxLength={300}
               value={newSprintGoal}
               onChange={e => setNewSprintGoal(e.target.value)}
               className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white"
             />
           </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-[11px] font-medium text-slate-600">
+              Start date
+              <input type="date" value={newSprintStart} onChange={e => { setNewSprintStart(e.target.value); setSprintError(null); }}
+                className="mt-1 w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white" />
+            </label>
+            <label className="text-[11px] font-medium text-slate-600">
+              End date
+              <input type="date" value={newSprintEnd} min={newSprintStart} onChange={e => { setNewSprintEnd(e.target.value); setSprintError(null); }}
+                className="mt-1 w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white" />
+            </label>
+          </div>
           <div className="flex items-center justify-end gap-2 pt-2">
             <button
               type="button"
-              onClick={() => setIsNewSprintFormOpen(false)}
+              onClick={() => { setIsNewSprintFormOpen(false); setSprintError(null); }}
               className="px-3 py-1 rounded text-xs text-slate-500 hover:text-slate-800 cursor-pointer"
             >
               Cancel
@@ -265,7 +307,7 @@ export const BacklogView: React.FC = () => {
                     <span className="text-slate-700 font-semibold">{totalPoints} SP</span>
                   </div>
 
-                  {sprint.status === 'planned' && (
+                  {sprint.status === 'planned' && canManage && (
                     <button
                       onClick={() => startSprint(sprint.id)}
                       className="flex items-center gap-1.5 px-3 py-1 rounded bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-medium transition-colors shadow-2xs cursor-pointer"
@@ -275,9 +317,11 @@ export const BacklogView: React.FC = () => {
                     </button>
                   )}
 
-                  {sprint.status === 'active' && (
+                  {sprint.status === 'active' && canManage && (
                     <button
-                      onClick={() => completeSprint(sprint.id)}
+                      onClick={() => {
+                        if (confirm(`Complete ${sprint.name}? Unfinished work stays in the backlog for the next sprint.`)) completeSprint(sprint.id);
+                      }}
                       className="flex items-center gap-1.5 px-3 py-1 rounded bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" />

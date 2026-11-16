@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useProject } from '../context/ProjectContext';
+import { canEditWork, canManageProject, useProject } from '../context/ProjectContext';
 import { Issue, KanbanColumn, SwimlaneType } from '../types';
 import { WorkItemIcon, PriorityIcon } from './WorkItemIcon';
 import {
@@ -12,7 +12,8 @@ import {
   X,
   Layers,
   MessageSquare,
-  CheckSquare
+  CheckSquare,
+  Lock
 } from 'lucide-react';
 
 export const KanbanBoard: React.FC = () => {
@@ -38,8 +39,14 @@ export const KanbanBoard: React.FC = () => {
     moveIssueStatus,
     setSelectedIssue,
     setIsCreateModalOpen,
-    completeSprint
+    completeSprint,
+    myRoleIn
   } = useProject();
+
+  // Members can move cards; only owners/admins manage the sprint. Viewers and non-members are read-only.
+  const myRole = myRoleIn(activeProject);
+  const canEdit = canEditWork(myRole);
+  const canManage = canManageProject(myRole);
 
   const [draggedIssueId, setDraggedIssueId] = useState<string | null>(null);
   const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null);
@@ -107,6 +114,7 @@ export const KanbanBoard: React.FC = () => {
   };
 
   const handleDragOver = (e: React.DragEvent, colId: string) => {
+    if (!canEdit) return;
     e.preventDefault();
     setDragOverColumnId(colId);
   };
@@ -114,7 +122,7 @@ export const KanbanBoard: React.FC = () => {
   const handleDrop = (e: React.DragEvent, colId: string) => {
     e.preventDefault();
     const id = e.dataTransfer.getData('text/plain') || draggedIssueId;
-    if (id) {
+    if (id && canEdit) {
       moveIssueStatus(id, colId);
     }
     setDraggedIssueId(null);
@@ -129,8 +137,8 @@ export const KanbanBoard: React.FC = () => {
     return (
       <div
         key={issue.id}
-        draggable
-        onDragStart={e => handleDragStart(e, issue.id)}
+        draggable={canEdit}
+        onDragStart={canEdit ? e => handleDragStart(e, issue.id) : undefined}
         onClick={() => setSelectedIssue(issue)}
         className={`group p-3.5 rounded-xl bg-white hover:bg-slate-50/80 border transition-all duration-150 cursor-pointer shadow-2xs hover:shadow-xs ${
           isBlocker
@@ -273,7 +281,7 @@ export const KanbanBoard: React.FC = () => {
                   )}
 
                   {/* Quick Add Issue Button for this status */}
-                  <button
+                  {canEdit && <button
                     onClick={() => {
                       setIsCreateModalOpen(true);
                     }}
@@ -281,7 +289,7 @@ export const KanbanBoard: React.FC = () => {
                     title={`Add issue to ${column.name}`}
                   >
                     <Plus className="w-3.5 h-3.5" />
-                  </button>
+                  </button>}
                 </div>
               </div>
 
@@ -407,9 +415,11 @@ export const KanbanBoard: React.FC = () => {
           </div>
 
           {/* Complete Sprint Action Button with gradient */}
-          {activeSprint && (
+          {activeSprint && canManage && (
             <button
-              onClick={() => completeSprint(activeSprint.id)}
+              onClick={() => {
+                if (confirm(`Complete ${activeSprint.name}? Unfinished work stays in the backlog for the next sprint.`)) completeSprint(activeSprint.id);
+              }}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-semibold shadow-xs transition-all active:scale-95 cursor-pointer"
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
@@ -418,6 +428,15 @@ export const KanbanBoard: React.FC = () => {
           )}
         </div>
       </div>
+
+      {!canEdit && (
+        <div role="status" className="mx-5 mt-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
+          <Lock className="w-3.5 h-3.5 shrink-0" />
+          {myRole === 'viewer'
+            ? 'You have view-only access to this project.'
+            : 'You are not a member of this project, so it is view-only. Ask a project admin to add you.'}
+        </div>
+      )}
 
       {/* Kanban Columns Canvas */}
       <div className="flex-1 p-5 overflow-auto">

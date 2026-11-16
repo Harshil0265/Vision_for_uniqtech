@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useProject } from '../context/ProjectContext';
-// Clerk removed - using custom user display
 import { VisionLogo } from './VisionLogo';
 import { AccountMenu } from './AccountMenu';
 import {

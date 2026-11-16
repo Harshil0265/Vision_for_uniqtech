@@ -3,11 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { HomePage } from './HomePage';
 import { AuthDialog, type AuthMode } from './AuthDialog';
+
+// The marketing page (and its animation library) is only downloaded by signed-out visitors.
+const HomePage = lazy(() => import('./HomePage').then(m => ({ default: m.HomePage })));
+
+const FullPageSpinner: React.FC = () => (
+  <div className="flex items-center justify-center h-screen bg-slate-50" role="status" aria-label="Loading">
+    <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+  </div>
+);
 
 interface AuthWrapperProps {
   children: React.ReactNode;
@@ -39,18 +47,14 @@ export const AuthWrapper: React.FC<AuthWrapperProps> = ({ children }) => {
     if (status === 'unauthenticated') window.scrollTo({ top: 0 });
   }, [status]);
 
-  if (status === 'loading') {
-    return (
-      <div className="flex items-center justify-center h-screen bg-slate-50" role="status" aria-label="Loading">
-        <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
-      </div>
-    );
-  }
+  if (status === 'loading') return <FullPageSpinner />;
 
   if (status === 'unauthenticated') {
     return (
       <>
-        <HomePage onSignIn={() => setAuthMode('signin')} onSignUp={() => setAuthMode('signup')} />
+        <Suspense fallback={<FullPageSpinner />}>
+          <HomePage onSignIn={() => setAuthMode('signin')} onSignUp={() => setAuthMode('signup')} />
+        </Suspense>
         {authMode && (
           <AuthDialog
             mode={authMode}

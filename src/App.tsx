@@ -3,25 +3,33 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { AuthProvider } from './context/AuthContext';
 import { ProjectProvider, useProject } from './context/ProjectContext';
 import { AuthWrapper } from './components/AuthWrapper';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
-import { KanbanBoard } from './components/KanbanBoard';
-import { BacklogView } from './components/BacklogView';
-import { AnalyticsDashboard } from './components/AnalyticsDashboard';
-import { ProjectsView } from './components/ProjectsView';
-import { TeamView } from './components/TeamView';
 import { IssueDetailModal } from './components/IssueDetailModal';
 import { CreateIssueModal } from './components/CreateIssueModal';
 import { CreateProjectModal } from './components/CreateProjectModal';
-import { DashboardView } from './components/DashboardView';
-import { ProjectMembersView } from './components/ProjectMembersView';
-import { ProfileView } from './components/ProfileView';
 import { useAuth } from './context/AuthContext';
-import { Activity, ServerCrash, ShieldCheck } from 'lucide-react';
+import { Activity, Loader2, ServerCrash, ShieldCheck } from 'lucide-react';
+
+// Each page is its own chunk, loaded the first time it is opened.
+const DashboardView = lazy(() => import('./components/DashboardView').then(m => ({ default: m.DashboardView })));
+const KanbanBoard = lazy(() => import('./components/KanbanBoard').then(m => ({ default: m.KanbanBoard })));
+const BacklogView = lazy(() => import('./components/BacklogView').then(m => ({ default: m.BacklogView })));
+const AnalyticsDashboard = lazy(() => import('./components/AnalyticsDashboard').then(m => ({ default: m.AnalyticsDashboard })));
+const ProjectsView = lazy(() => import('./components/ProjectsView').then(m => ({ default: m.ProjectsView })));
+const TeamView = lazy(() => import('./components/TeamView').then(m => ({ default: m.TeamView })));
+const ProjectMembersView = lazy(() => import('./components/ProjectMembersView').then(m => ({ default: m.ProjectMembersView })));
+const ProfileView = lazy(() => import('./components/ProfileView').then(m => ({ default: m.ProfileView })));
+
+const PageLoading: React.FC = () => (
+  <div className="flex-1 flex items-center justify-center" role="status" aria-label="Loading page">
+    <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+  </div>
+);
 
 const AppContent: React.FC = () => {
   const { activeTab, recentActivity, realtimeStatus } = useProject();
@@ -62,7 +70,7 @@ const AppContent: React.FC = () => {
 
         {/* Dynamic Center Work Area */}
         <main className="flex-1 flex flex-col overflow-hidden bg-slate-50/60">
-          {renderActiveView()}
+          <Suspense fallback={<PageLoading />}>{renderActiveView()}</Suspense>
         </main>
       </div>
 

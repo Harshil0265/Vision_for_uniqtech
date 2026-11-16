@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { useProject } from '../context/ProjectContext';
+import React, { useState, useRef, useEffect } from 'react';
+import { canEditWork, canManageProject, useProject } from '../context/ProjectContext';
 import { WorkItemIcon, PriorityIcon } from './WorkItemIcon';
 import { Issue, Priority } from '../types';
 import {
@@ -9,7 +9,8 @@ import {
   MessageSquare,
   History,
   Send,
-  AtSign
+  AtSign,
+  Lock
 } from 'lucide-react';
 
 export const IssueDetailModal: React.FC = () => {
@@ -33,7 +34,8 @@ const IssueDetailContent: React.FC<{ selectedIssue: Issue }> = ({ selectedIssue 
     toggleSubtask,
     addSubtask,
     addComment,
-    getProjectMembers
+    getProjectMembers,
+    myRoleIn
   } = useProject();
 
   const issueProject = projects.find(p => p.id === selectedIssue.projectId) || activeProject;
@@ -43,6 +45,11 @@ const IssueDetailContent: React.FC<{ selectedIssue: Issue }> = ({ selectedIssue 
     const current = selectedIssue.assignee;
     return current && !list.some(u => u.id === current.id) ? [current, ...list] : list;
   })();
+
+  // Members edit and comment; only owners/admins delete. Viewers and non-members get a read-only view.
+  const myRole = myRoleIn(issueProject);
+  const canEdit = canEditWork(myRole);
+  const canDelete = canManageProject(myRole);
 
   const [activeTab, setActiveTab] = useState<'comments' | 'history'>('comments');
   const [commentText, setCommentText] = useState('');
@@ -54,6 +61,15 @@ const IssueDetailContent: React.FC<{ selectedIssue: Issue }> = ({ selectedIssue 
   const [mentionPickerOpen, setMentionPickerOpen] = useState(false);
 
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Escape closes the panel (the close button promises it), unless a text edit is in progress.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isEditingTitle && !isEditingDesc) setSelectedIssue(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isEditingTitle, isEditingDesc, setSelectedIssue]);
 
   const handleTitleBlur = () => {
     setIsEditingTitle(false);
@@ -99,10 +115,14 @@ const IssueDetailContent: React.FC<{ selectedIssue: Issue }> = ({ selectedIssue 
   const subtasksPercent = subtasksTotal > 0 ? Math.round((subtasksCompleted / subtasksTotal) * 100) : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/40 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/40 backdrop-blur-xs" onMouseDown={() => setSelectedIssue(null)}>
       <div
         className="w-full max-w-5xl bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150"
         onClick={e => e.stopPropagation()}
+        onMouseDown={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${selectedIssue.key}: ${selectedIssue.title}`}
       >
         {/* Modal Top Bar */}
         <div className="px-6 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
@@ -118,26 +138,35 @@ const IssueDetailContent: React.FC<{ selectedIssue: Issue }> = ({ selectedIssue 
           </div>
 
           <div className="flex items-center gap-2">
-            <button
+            {canDelete && <button
               onClick={() => {
                 if (confirm(`Are you sure you want to delete ${selectedIssue.key}?`)) {
                   deleteIssue(selectedIssue.id);
                 }
               }}
               className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-slate-100 transition-colors cursor-pointer"
-              title="Delete issue"
+              title="Delete work item"
+              aria-label={`Delete ${selectedIssue.key}`}
             >
               <Trash2 className="w-4 h-4" />
-            </button>
+            </button>}
             <button
               onClick={() => setSelectedIssue(null)}
               className="p-1.5 rounded-lg text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
-              title="Close modal (Esc)"
+              title="Close (Esc)"
+              aria-label="Close"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
+
+        {!canEdit && (
+          <div role="status" className="px-6 py-2 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-800 flex items-center gap-2">
+            <Lock className="w-3.5 h-3.5 shrink-0" />
+            {myRole === 'viewer' ? 'View only: viewers cannot change work items.' : 'View only: you are not a member of this project.'}
+          </div>
+        )}
 
         {/* Modal Body: Left Pane (Content) + Right Pane (Sidebar Details) */}
         <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto">
@@ -156,7 +185,7 @@ const IssueDetailContent: React.FC<{ selectedIssue: Issue }> = ({ selectedIssue 
                 />
               ) : (
                 <h2
-                  onClick={() => setIsEditingTitle(true)}
+                  onClick={() => canEdit && setIsEditingTitle(true)}
                   className="text-base font-semibold text-slate-900 hover:bg-slate-50 p-1.5 -ml-1.5 rounded-lg cursor-pointer transition-colors"
                   title="Click to edit title"
                 >
@@ -195,7 +224,7 @@ const IssueDetailContent: React.FC<{ selectedIssue: Issue }> = ({ selectedIssue 
                 </div>
               ) : (
                 <div
-                  onClick={() => setIsEditingDesc(true)}
+                  onClick={() => canEdit && setIsEditingDesc(true)}
                   className="p-3.5 bg-slate-50 hover:bg-slate-100/60 rounded-xl border border-slate-200 text-xs text-slate-700 leading-relaxed cursor-pointer transition-colors whitespace-pre-wrap min-h-[60px]"
                   title="Click to edit description"
                 >
@@ -205,7 +234,7 @@ const IssueDetailContent: React.FC<{ selectedIssue: Issue }> = ({ selectedIssue 
             </div>
 
             {/* Subtasks Checklist */}
-            <div className="space-y-3 pt-2">
+            <fieldset disabled={!canEdit} className="space-y-3 pt-2 min-w-0 disabled:opacity-60 [&:disabled_*]:cursor-not-allowed">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <CheckSquare className="w-4 h-4 text-blue-600" />
@@ -271,7 +300,7 @@ const IssueDetailContent: React.FC<{ selectedIssue: Issue }> = ({ selectedIssue 
                   Add
                 </button>
               </form>
-            </div>
+            </fieldset>
 
             {/* Discussion Comments & Audit Log Tabs */}
             <div className="space-y-4 pt-4 border-t border-slate-200">
@@ -332,6 +361,7 @@ const IssueDetailContent: React.FC<{ selectedIssue: Issue }> = ({ selectedIssue 
                   </div>
 
                   {/* Add comment with @mention prompt */}
+                  {canEdit ? (
                   <form onSubmit={handleCommentSubmit} className="space-y-2 relative">
                     <div className="relative">
                       <textarea
@@ -396,6 +426,9 @@ const IssueDetailContent: React.FC<{ selectedIssue: Issue }> = ({ selectedIssue 
                       </button>
                     </div>
                   </form>
+                  ) : (
+                    <p className="text-[11px] text-slate-500">Only project members can comment.</p>
+                  )}
                 </div>
               ) : (
                 /* History / Activity Log */
@@ -423,7 +456,7 @@ const IssueDetailContent: React.FC<{ selectedIssue: Issue }> = ({ selectedIssue 
           </div>
 
           {/* Right Sidebar Pane: Work Item Properties */}
-          <div className="w-full lg:w-80 p-6 bg-slate-50/70 space-y-5">
+          <fieldset disabled={!canEdit} className="w-full lg:w-80 p-6 bg-slate-50/70 space-y-5 min-w-0 disabled:opacity-60 [&:disabled_*]:cursor-not-allowed">
             {/* Work Item Type */}
             <div className="space-y-1.5">
               <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
@@ -586,7 +619,7 @@ const IssueDetailContent: React.FC<{ selectedIssue: Issue }> = ({ selectedIssue 
               <div>Created: {new Date(selectedIssue.createdAt).toLocaleDateString()}</div>
               <div>Updated: {new Date(selectedIssue.updatedAt).toLocaleTimeString()}</div>
             </div>
-          </div>
+          </fieldset>
         </div>
       </div>
     </div>

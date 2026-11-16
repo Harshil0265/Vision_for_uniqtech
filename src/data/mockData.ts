@@ -120,8 +120,8 @@ export const INITIAL_SPRINTS: Sprint[] = [
   {
     id: 'sprint-25',
     projectId: 'proj-op',
-    name: 'Sprint 25: Nodemailer Automation & Webhooks',
-    goal: 'Integrate automated notification delivery rules, SMTP fallback queues, and Clerk SSO directory synchronization.',
+    name: 'Sprint 25: Notifications & Access Control',
+    goal: 'Deliver in-app notification rules, project member roles, and the invitation flow for new teammates.',
     startDate: '2026-10-16',
     endDate: '2026-10-30',
     status: 'planned',
@@ -256,8 +256,8 @@ export const INITIAL_ISSUES: Issue[] = [
     id: 'issue-103',
     key: 'OP-103',
     projectId: 'proj-op',
-    title: 'Clerk Authentication and Multi-Role RBAC Profile Synchronizer',
-    description: 'Integrate user session tokens, JWT claims validation, role assignments (Admin, Tech Lead, Contributor, Viewer), and user switching.',
+    title: 'JWT Authentication and Project Role-Based Access Control',
+    description: 'Sign-in with JWT session tokens, claims validation in the .NET API, and project roles (Owner, Admin, Member, Viewer) enforced on every endpoint.',
     type: 'story',
     priority: 'high',
     status: 'code_review',
@@ -265,10 +265,10 @@ export const INITIAL_ISSUES: Issue[] = [
     reporter: TEAM_MEMBERS[0], // Sarah Jenkins
     sprintId: 'sprint-24',
     storyPoints: 8,
-    labels: ['security', 'authentication', 'clerk', 'rbac'],
+    labels: ['security', 'authentication', 'jwt', 'rbac'],
     subtasks: [
-      { id: 'st-31', title: 'Implement Clerk JWT claim verification middleware', completed: true },
-      { id: 'st-32', title: 'Map Clerk metadata roles to internal project permissions', completed: true },
+      { id: 'st-31', title: 'Implement JWT bearer validation middleware in the API', completed: true },
+      { id: 'st-32', title: 'Map project member roles to endpoint permissions', completed: true },
       { id: 'st-33', title: 'Add session expiration graceful modal refresher', completed: true }
     ],
     comments: [
@@ -296,8 +296,8 @@ export const INITIAL_ISSUES: Issue[] = [
     id: 'issue-104',
     key: 'OP-104',
     projectId: 'proj-op',
-    title: 'Nodemailer Automated Notification Engine & HTML Email Templates',
-    description: 'Build enterprise email dispatcher for assignment alerts, priority escalations, sprint completion digests, and @mention notifications with preview inspector.',
+    title: 'In-App Notification Engine for Assignments and Mentions',
+    description: 'Notify people in the app when work is assigned to them, when a blocker is raised, when a sprint completes, and when they are @mentioned.',
     type: 'story',
     priority: 'high',
     status: 'qa_staging',
@@ -305,11 +305,11 @@ export const INITIAL_ISSUES: Issue[] = [
     reporter: TEAM_MEMBERS[1], // Alex Rivera
     sprintId: 'sprint-24',
     storyPoints: 5,
-    labels: ['email', 'notifications', 'nodemailer', 'backend'],
+    labels: ['notifications', 'frontend', 'backend'],
     subtasks: [
-      { id: 'st-41', title: 'Setup Nodemailer transporter with Ethereal SMTP test engine', completed: true },
-      { id: 'st-42', title: 'Create responsive HTML email layouts for enterprise alerts', completed: true },
-      { id: 'st-43', title: 'Implement in-app outbox log and manual dispatch test console', completed: true }
+      { id: 'st-41', title: 'Create the notifications table and API endpoints', completed: true },
+      { id: 'st-42', title: 'Build the notification bell and unread badge', completed: true },
+      { id: 'st-43', title: 'Trigger notifications for assignments and @mentions', completed: true }
     ],
     comments: [],
     activities: [
@@ -456,7 +456,7 @@ export const INITIAL_NOTIFICATIONS: AppNotification[] = [
   {
     id: 'notif-1',
     title: 'Issue Assigned',
-    message: 'Sarah Jenkins assigned OP-104 (Nodemailer Automated Notification Engine) to you.',
+    message: 'Sarah Jenkins assigned OP-104 (In-App Notification Engine) to you.',
     timestamp: '15 minutes ago',
     read: false,
     type: 'assignment',
