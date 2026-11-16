@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { VisionLogo } from './VisionLogo';
+import { ROUTES, navigate } from '../lib/router';
 import { AccountMenu } from './AccountMenu';
 import {
   Plus,
@@ -59,7 +60,14 @@ export const Navbar: React.FC = () => {
       {/* Left: Brand & Interactive Project Selector */}
       <div className="flex items-center gap-4">
         {/* Brand */}
-        <VisionLogo size="md" showSubtitle={true} />
+        <a
+          href="/"
+          onClick={e => { e.preventDefault(); navigate(ROUTES.home); }}
+          aria-label="Vision home page"
+          className="rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+        >
+          <VisionLogo size="md" showSubtitle={true} />
+        </a>
 
         <div className="h-4 w-px bg-slate-200 hidden sm:block" />
 

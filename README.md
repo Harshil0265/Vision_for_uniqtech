@@ -14,8 +14,16 @@ Project and sprint management: home page, sign-up and sign-in, dashboard, projec
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
+npm run dev        # opens http://localhost:5173 (also reachable as http://127.0.0.1:5173)
 ```
+
+| Address | Page |
+|---|---|
+| `/` | Home page (signed-in users see an "Open dashboard" button) |
+| `/app` | The workspace (dashboard, board, backlog, members, …); signed-out visitors are sent to sign in |
+| `/reset-password?token=…` | Password reset link from email |
+
+When hosting the production build (`dist/`), configure the web server to serve `index.html` for these paths (SPA fallback).
 
 The frontend calls the API at `/api`, which Vite forwards to `http://localhost:5286` (the .NET `http` launch profile). Start the API with:
 

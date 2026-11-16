@@ -33,6 +33,9 @@ import { VisionLogo } from './VisionLogo';
 interface HomePageProps {
   onSignIn?: () => void;
   onSignUp?: () => void;
+  /** Set when someone is already signed in: the page then offers "Open dashboard" instead of sign-in. */
+  signedInName?: string;
+  onOpenApp?: () => void;
 }
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -207,7 +210,8 @@ const SECURITY = [
   { icon: EyeOff, title: 'No account probing', body: 'A wrong email and a wrong password give the same answer, so nobody can check who has an account.' }
 ];
 
-export const HomePage: React.FC<HomePageProps> = ({ onSignIn, onSignUp }) => {
+export const HomePage: React.FC<HomePageProps> = ({ onSignIn, onSignUp, signedInName, onOpenApp }) => {
+  const signedIn = !!signedInName;
   const reduce = useReducedMotion();
   const heroRef = useRef<HTMLElement>(null);
   const [scrolled, setScrolled] = useState(false);
@@ -243,8 +247,17 @@ export const HomePage: React.FC<HomePageProps> = ({ onSignIn, onSignUp }) => {
             ))}
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
-            <button onClick={onSignIn} className="px-3 sm:px-4 py-2 text-sm font-medium text-slate-200 hover:text-white cursor-pointer">Sign in</button>
-            <button onClick={onSignUp} className={`${primaryBtn} px-4 py-2 text-sm`}>Get started</button>
+            {signedIn ? (
+              <>
+                <span className="hidden sm:inline text-sm text-slate-300">Signed in as <span className="font-semibold text-white">{signedInName}</span></span>
+                <button onClick={onOpenApp} className={`${primaryBtn} px-4 py-2 text-sm`}>Open dashboard</button>
+              </>
+            ) : (
+              <>
+                <button onClick={onSignIn} className="px-3 sm:px-4 py-2 text-sm font-medium text-slate-200 hover:text-white cursor-pointer">Sign in</button>
+                <button onClick={onSignUp} className={`${primaryBtn} px-4 py-2 text-sm`}>Get started</button>
+              </>
+            )}
           </div>
         </nav>
       </header>
@@ -344,8 +357,8 @@ export const HomePage: React.FC<HomePageProps> = ({ onSignIn, onSignUp }) => {
               transition={{ duration: 0.7, delay: 1.15, ease: EASE }}
               className="mt-9 flex flex-col sm:flex-row gap-3"
             >
-              <button onClick={onSignUp} className={`${primaryBtn} group px-7 py-3.5 text-base`}>
-                Start for free
+              <button onClick={signedIn ? onOpenApp : onSignUp} className={`${primaryBtn} group px-7 py-3.5 text-base`}>
+                {signedIn ? 'Open dashboard' : 'Start for free'}
                 <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
               </button>
               <button
@@ -479,15 +492,26 @@ export const HomePage: React.FC<HomePageProps> = ({ onSignIn, onSignUp }) => {
         <Reveal className="max-w-4xl mx-auto text-center rounded-3xl bg-gradient-to-br from-[#0a1020] via-[#10204a] to-[#1e3a8a] text-white px-6 py-16 sm:px-12 shadow-2xl shadow-blue-900/20 relative overflow-hidden">
           <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-amber-300/10 blur-3xl" aria-hidden />
           <h2 className="font-display text-3xl sm:text-5xl leading-[1.1] relative">Ready to bring clarity to your next sprint?</h2>
-          <p className="mt-4 text-slate-300 text-lg relative">Create your free workspace in under a minute.</p>
+          <p className="mt-4 text-slate-300 text-lg relative">
+            {signedIn ? 'Your workspace is ready. Pick up where you left off.' : 'Create your free workspace in under a minute.'}
+          </p>
           <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3 relative">
-            <button onClick={onSignUp} className={`${primaryBtn} group px-8 py-4 text-base`}>
-              Create your account
-              <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-            </button>
-            <button onClick={onSignIn} className="px-8 py-4 rounded-xl text-base font-semibold border border-white/25 hover:bg-white/10 transition-colors cursor-pointer">
-              I already have an account
-            </button>
+            {signedIn ? (
+              <button onClick={onOpenApp} className={`${primaryBtn} group px-8 py-4 text-base`}>
+                Open dashboard
+                <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+              </button>
+            ) : (
+              <>
+                <button onClick={onSignUp} className={`${primaryBtn} group px-8 py-4 text-base`}>
+                  Create your account
+                  <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+                </button>
+                <button onClick={onSignIn} className="px-8 py-4 rounded-xl text-base font-semibold border border-white/25 hover:bg-white/10 transition-colors cursor-pointer">
+                  I already have an account
+                </button>
+              </>
+            )}
           </div>
         </Reveal>
       </section>
