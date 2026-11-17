@@ -26,14 +26,18 @@ public class VisionDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
-        // User configuration
+        // User configuration (Matches the SQL table Users)
         modelBuilder.Entity<User>(entity =>
         {
-            entity.HasKey(e => e.Id);
-            entity.HasIndex(e => e.Email).IsUnique();
-            entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
-            entity.Property(e => e.Email).HasMaxLength(320).IsRequired();
-            entity.Property(e => e.PasswordHash).HasMaxLength(256).IsRequired();
+            entity.ToTable("Users");
+            entity.HasKey(e => e.ID);
+            entity.Property(e => e.ID).HasColumnName("ID").ValueGeneratedOnAdd();
+            entity.Property(e => e.FullName).HasColumnName("FullName").HasMaxLength(100);
+            entity.Property(e => e.GmailAddress).HasColumnName("GmailAddress").HasMaxLength(100);
+            entity.Property(e => e.Password).HasColumnName("Password").HasMaxLength(50);
+            entity.Property(e => e.CreatedDateTime).HasColumnName("CreatedDateTime");
+            entity.Property(e => e.JobTitle).HasColumnName("JobTitle").HasMaxLength(50);
+            entity.Property(e => e.Department).HasColumnName("Department").HasMaxLength(50);
         });
 
         // Project configuration
@@ -42,11 +46,7 @@ public class VisionDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.Key).IsUnique();
             entity.Property(e => e.Key).HasMaxLength(10).IsRequired();
-
-            entity.HasOne(e => e.Lead)
-                .WithMany(u => u.LeadProjects)
-                .HasForeignKey(e => e.LeadId)
-                .OnDelete(DeleteBehavior.Restrict);
+            entity.Ignore(e => e.Lead);
         });
 
         // ProjectAllowedIssueType configuration
@@ -73,21 +73,13 @@ public class VisionDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.Key).IsUnique();
             entity.Property(e => e.Key).HasMaxLength(20).IsRequired();
+            entity.Ignore(e => e.Assignee);
+            entity.Ignore(e => e.Reporter);
 
             entity.HasOne(e => e.Project)
                 .WithMany(p => p.Issues)
                 .HasForeignKey(e => e.ProjectId)
                 .OnDelete(DeleteBehavior.Cascade);
-
-            entity.HasOne(e => e.Assignee)
-                .WithMany(u => u.AssignedIssues)
-                .HasForeignKey(e => e.AssigneeId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            entity.HasOne(e => e.Reporter)
-                .WithMany(u => u.ReportedIssues)
-                .HasForeignKey(e => e.ReporterId)
-                .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasOne(e => e.Sprint)
                 .WithMany(s => s.Issues)
@@ -116,15 +108,11 @@ public class VisionDbContext : DbContext
         // Comment configuration
         modelBuilder.Entity<Comment>(entity =>
         {
+            entity.Ignore(e => e.Author);
             entity.HasOne(e => e.Issue)
                 .WithMany(i => i.Comments)
                 .HasForeignKey(e => e.IssueId)
                 .OnDelete(DeleteBehavior.Cascade);
-
-            entity.HasOne(e => e.Author)
-                .WithMany(u => u.Comments)
-                .HasForeignKey(e => e.AuthorId)
-                .OnDelete(DeleteBehavior.Restrict);
         });
 
         // CommentMention configuration
@@ -139,15 +127,11 @@ public class VisionDbContext : DbContext
         // Activity configuration
         modelBuilder.Entity<Activity>(entity =>
         {
+            entity.Ignore(e => e.User);
             entity.HasOne(e => e.Issue)
                 .WithMany(i => i.Activities)
                 .HasForeignKey(e => e.IssueId)
                 .OnDelete(DeleteBehavior.Cascade);
-
-            entity.HasOne(e => e.User)
-                .WithMany(u => u.Activities)
-                .HasForeignKey(e => e.UserId)
-                .OnDelete(DeleteBehavior.Restrict);
         });
 
         // KanbanColumn configuration
@@ -160,26 +144,15 @@ public class VisionDbContext : DbContext
         // Notification configuration
         modelBuilder.Entity<Notification>(entity =>
         {
-            entity.HasOne(e => e.User)
-                .WithMany(u => u.Notifications)
-                .HasForeignKey(e => e.UserId)
-                .OnDelete(DeleteBehavior.Cascade);
-
-            entity.HasOne(e => e.Author)
-                .WithMany()
-                .HasForeignKey(e => e.AuthorId)
-                .OnDelete(DeleteBehavior.SetNull);
+            entity.Ignore(e => e.User);
+            entity.Ignore(e => e.Author);
         });
 
         // RefreshToken configuration
         modelBuilder.Entity<RefreshToken>(entity =>
         {
+            entity.Ignore(e => e.User);
             entity.HasIndex(e => e.Token).IsUnique();
-
-            entity.HasOne(e => e.User)
-                .WithMany(u => u.RefreshTokens)
-                .HasForeignKey(e => e.UserId)
-                .OnDelete(DeleteBehavior.Cascade);
         });
 
         SeedData(modelBuilder);
@@ -188,38 +161,6 @@ public class VisionDbContext : DbContext
     private void SeedData(ModelBuilder modelBuilder)
     {
         var now = DateTime.UtcNow;
-        
-        // Seed Users (password: Password123!)
-        var users = new[]
-        {
-            new User
-            {
-                Id = Guid.Parse("00000000-0000-0000-0000-000000000001"),
-                Name = "Sarah Jenkins",
-                Email = "sarah.jenkins@vision.dev",
-                Avatar = "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
-                Role = "Staff Product Manager",
-                Department = "Platform Systems",
-                Status = "online",
-                PasswordHash = "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYIpWy7p5fq",
-                CreatedAt = now,
-                UpdatedAt = now
-            },
-            new User
-            {
-                Id = Guid.Parse("00000000-0000-0000-0000-000000000002"),
-                Name = "Alex Rivera",
-                Email = "alex.rivera@vision.dev",
-                Avatar = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-                Role = "Principal Architect",
-                Department = "Engineering",
-                Status = "online",
-                PasswordHash = "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYIpWy7p5fq",
-                CreatedAt = now,
-                UpdatedAt = now
-            }
-        };
-        modelBuilder.Entity<User>().HasData(users);
 
         // Seed KanbanColumns
         var columns = new[]
@@ -227,27 +168,10 @@ public class VisionDbContext : DbContext
             new KanbanColumn { Id = "backlog", Name = "Backlog", WipLimit = 0, Color = "#64748b", Category = "todo", DisplayOrder = 1, CreatedAt = now, UpdatedAt = now },
             new KanbanColumn { Id = "todo", Name = "To Do", WipLimit = 8, Color = "#2563eb", Category = "todo", DisplayOrder = 2, CreatedAt = now, UpdatedAt = now },
             new KanbanColumn { Id = "in_progress", Name = "In Progress", WipLimit = 4, Color = "#d97706", Category = "in_progress", DisplayOrder = 3, CreatedAt = now, UpdatedAt = now },
-            new KanbanColumn { Id = "done", Name = "Done", WipLimit = 0, Color = "#059669", Category = "done", DisplayOrder = 4, CreatedAt = now, UpdatedAt = now }
+            new KanbanColumn { Id = "code_review", Name = "Code Review", WipLimit = 3, Color = "#7c3aed", Category = "in_progress", DisplayOrder = 4, CreatedAt = now, UpdatedAt = now },
+            new KanbanColumn { Id = "qa_staging", Name = "QA & Staging", WipLimit = 3, Color = "#db2777", Category = "in_progress", DisplayOrder = 5, CreatedAt = now, UpdatedAt = now },
+            new KanbanColumn { Id = "done", Name = "Done", WipLimit = 0, Color = "#059669", Category = "done", DisplayOrder = 6, CreatedAt = now, UpdatedAt = now }
         };
         modelBuilder.Entity<KanbanColumn>().HasData(columns);
-
-        // Seed Projects
-        var projects = new[]
-        {
-            new Project
-            {
-                Id = Guid.Parse("10000000-0000-0000-0000-000000000001"),
-                Name = "Platform Engineering",
-                Key = "OP",
-                Description = "Core platform development",
-                LeadId = users[1].Id,
-                Template = "Scrum",
-                DefaultAssignee = "unassigned",
-                IconGradient = "from-blue-600 to-sky-500",
-                CreatedAt = now,
-                UpdatedAt = now
-            }
-        };
-        modelBuilder.Entity<Project>().HasData(projects);
     }
 }
