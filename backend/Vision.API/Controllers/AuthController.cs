@@ -1,12 +1,8 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
-using Vision.Data;
-using Vision.Data.Entities;
+using Vision.Common.DTOs;
+using Vision.Service;
 
 namespace Vision.API.Controllers;
 
@@ -14,14 +10,12 @@ namespace Vision.API.Controllers;
 [Route("api/auth")]
 public class AuthController : ControllerBase
 {
-    private readonly VisionDbContext _db;
-    private readonly IConfiguration _configuration;
+    private readonly IAuthService _authService;
     private readonly ILogger<AuthController> _logger;
 
-    public AuthController(VisionDbContext db, IConfiguration configuration, ILogger<AuthController> logger)
+    public AuthController(IAuthService authService, ILogger<AuthController> logger)
     {
-        _db = db;
-        _configuration = configuration;
+        _authService = authService;
         _logger = logger;
     }
 
@@ -33,56 +27,17 @@ public class AuthController : ControllerBase
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(request.Name))
+            var result = await _authService.SignUpAsync(request);
+            if (!result.Success)
             {
-                return BadRequest(new { success = false, error = "Name is required." });
+                return BadRequest(new { success = false, error = result.Error });
             }
-
-            if (string.IsNullOrWhiteSpace(request.Email))
-            {
-                return BadRequest(new { success = false, error = "Email is required." });
-            }
-
-            if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 6)
-            {
-                return BadRequest(new { success = false, error = "Password must be at least 6 characters." });
-            }
-
-            var normalizedEmail = request.Email.Trim().ToLowerInvariant();
-
-            // Check if user already exists
-            var existingUser = await _db.Users
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.GmailAddress != null && u.GmailAddress.ToLower() == normalizedEmail);
-
-            if (existingUser != null)
-            {
-                return BadRequest(new { success = false, error = "An account with this email already exists." });
-            }
-
-            // Create new user in the Users table
-            var newUser = new User
-            {
-                FullName = request.Name.Trim(),
-                GmailAddress = normalizedEmail,
-                Password = HashPassword(request.Password),
-                CreatedDateTime = DateTime.UtcNow,
-                JobTitle = string.IsNullOrWhiteSpace(request.Role) ? "Member" : request.Role.Trim(),
-                Department = string.IsNullOrWhiteSpace(request.Department) ? "General" : request.Department.Trim()
-            };
-
-            await _db.Users.AddAsync(newUser);
-            await _db.SaveChangesAsync();
-
-            _logger.LogInformation("New user registered successfully: ID {UserId}, Email {Email}", newUser.ID, newUser.GmailAddress);
-
-            var token = GenerateJwtToken(newUser);
 
             return Ok(new
             {
                 success = true,
-                user = MapUserResponse(newUser),
-                token
+                user = result.User,
+                token = result.Token
             });
         }
         catch (Exception ex)
@@ -100,31 +55,17 @@ public class AuthController : ControllerBase
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
+            var result = await _authService.LoginAsync(request);
+            if (!result.Success)
             {
-                return BadRequest(new { success = false, error = "Email and password are required." });
+                return Unauthorized(new { success = false, error = result.Error });
             }
-
-            var normalizedEmail = request.Email.Trim().ToLowerInvariant();
-
-            // Query user from the database
-            var user = await _db.Users
-                .FirstOrDefaultAsync(u => u.GmailAddress != null && u.GmailAddress.ToLower() == normalizedEmail);
-
-            if (user == null || !VerifyPassword(request.Password, user.Password))
-            {
-                return Unauthorized(new { success = false, error = "Invalid email or password." });
-            }
-
-            _logger.LogInformation("User logged in successfully: ID {UserId}, Email {Email}", user.ID, user.GmailAddress);
-
-            var token = GenerateJwtToken(user);
 
             return Ok(new
             {
                 success = true,
-                user = MapUserResponse(user),
-                token
+                user = result.User,
+                token = result.Token
             });
         }
         catch (Exception ex)
@@ -156,18 +97,18 @@ public class AuthController : ControllerBase
 
             if (int.TryParse(userIdClaim, out var userId))
             {
-                var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.ID == userId);
+                var user = await _authService.GetUserByIdAsync(userId);
                 if (user != null)
                 {
-                    return Ok(new { success = true, user = MapUserResponse(user) });
+                    return Ok(new { success = true, user });
                 }
             }
 
-            // Fallback for demo/dev if token was not sent: return first active user if any
-            var firstUser = await _db.Users.AsNoTracking().OrderBy(u => u.ID).FirstOrDefaultAsync();
-            if (firstUser != null)
+            // Fallback: return the first user if in dev/offline
+            var allUsers = await _authService.GetAllUsersAsync();
+            if (allUsers.Count > 0)
             {
-                return Ok(new { success = true, user = MapUserResponse(firstUser) });
+                return Ok(new { success = true, user = allUsers[0] });
             }
 
             return Unauthorized(new { success = false, error = "Not authenticated" });
@@ -180,18 +121,18 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Get all users list for project assignment and mentions
+    /// Get all users list
     /// </summary>
     [HttpGet("users")]
     public async Task<IActionResult> GetAllUsers()
     {
         try
         {
-            var users = await _db.Users.AsNoTracking().OrderBy(u => u.ID).ToListAsync();
+            var users = await _authService.GetAllUsersAsync();
             return Ok(new
             {
                 success = true,
-                users = users.Select(MapUserResponse)
+                users
             });
         }
         catch (Exception ex)
@@ -200,98 +141,4 @@ public class AuthController : ControllerBase
             return StatusCode(500, new { success = false, error = "Failed to load users." });
         }
     }
-
-    #region Helper Methods
-
-    private static string HashPassword(string password)
-    {
-        using var sha256 = SHA256.Create();
-        var bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(password));
-        return Convert.ToBase64String(bytes);
-    }
-
-    private static bool VerifyPassword(string inputPassword, string? storedPassword)
-    {
-        if (string.IsNullOrEmpty(storedPassword) || string.IsNullOrEmpty(inputPassword))
-            return false;
-
-        // Check SHA256 base64 match
-        var inputHashed = HashPassword(inputPassword);
-        if (string.Equals(inputHashed, storedPassword, StringComparison.Ordinal))
-            return true;
-
-        // Fallback: direct plain text match (if legacy unhashed text exists)
-        if (string.Equals(inputPassword, storedPassword, StringComparison.Ordinal))
-            return true;
-
-        return false;
-    }
-
-    private string GenerateJwtToken(User user)
-    {
-        var jwtSettings = _configuration.GetSection("Jwt");
-        var secretKey = jwtSettings["Secret"] ?? "VisionProjectManagement2024SecureJwtKey256BitsMinimumForHS256AlgorithmSecurity!";
-
-        var claims = new List<Claim>
-        {
-            new Claim(JwtRegisteredClaimNames.Sub, user.ID.ToString()),
-            new Claim(ClaimTypes.NameIdentifier, user.ID.ToString()),
-            new Claim(JwtRegisteredClaimNames.Email, user.GmailAddress ?? string.Empty),
-            new Claim(ClaimTypes.Email, user.GmailAddress ?? string.Empty),
-            new Claim(JwtRegisteredClaimNames.Name, user.FullName ?? string.Empty),
-            new Claim(ClaimTypes.Name, user.FullName ?? string.Empty),
-            new Claim(ClaimTypes.Role, user.JobTitle ?? "Member"),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-        };
-
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-        var expirationMinutes = int.TryParse(jwtSettings["AccessTokenExpirationMinutes"], out var exp) ? exp : 60 * 24;
-
-        var token = new JwtSecurityToken(
-            issuer: jwtSettings["Issuer"] ?? "https://localhost:5001",
-            audience: jwtSettings["Audience"] ?? "https://localhost:5173",
-            claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(expirationMinutes),
-            signingCredentials: creds
-        );
-
-        return new JwtSecurityTokenHandler().WriteToken(token);
-    }
-
-    private static object MapUserResponse(User user)
-    {
-        var name = string.IsNullOrWhiteSpace(user.FullName) ? "User" : user.FullName;
-        var email = user.GmailAddress ?? string.Empty;
-        var avatar = $"https://ui-avatars.com/api/?name={Uri.EscapeDataString(name)}&background=2563eb&color=fff&size=150";
-
-        return new
-        {
-            id = user.ID.ToString(),
-            name,
-            email,
-            avatar,
-            role = string.IsNullOrWhiteSpace(user.JobTitle) ? "Member" : user.JobTitle,
-            department = string.IsNullOrWhiteSpace(user.Department) ? "General" : user.Department,
-            status = "online"
-        };
-    }
-
-    #endregion
-}
-
-public class SignUpRequest
-{
-    public string Name { get; set; } = string.Empty;
-    public string Email { get; set; } = string.Empty;
-    public string Password { get; set; } = string.Empty;
-    public string? Role { get; set; }
-    public string? Department { get; set; }
-}
-
-public class LoginRequest
-{
-    public string Email { get; set; } = string.Empty;
-    public string Password { get; set; } = string.Empty;
 }

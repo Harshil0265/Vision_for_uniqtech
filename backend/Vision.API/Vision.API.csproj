@@ -19,7 +19,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Vision.Business\Vision.Business.csproj" />
+    <ProjectReference Include="..\Vision.Service\Vision.Service.csproj" />
+    <ProjectReference Include="..\Vision.Repository\Vision.Repository.csproj" />
+    <ProjectReference Include="..\Vision.Common\Vision.Common.csproj" />
+    <ProjectReference Include="..\Vision.Data\Vision.Data.csproj" />
   </ItemGroup>
 
 </Project>
