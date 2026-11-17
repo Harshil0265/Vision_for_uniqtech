@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Vision.Data;
 
-var connectionString = "Server=sql8005.site4now.net,1433;Database=db_a4843b_projectmanagement;User Id=db_a4843b_projectmanagement_admin;Password=Uniqtech@12345#;TrustServerCertificate=True;MultipleActiveResultSets=True;Encrypt=True";
+var connectionString = "Server=sql8020.site4now.net,1433;Database=db_a4843b_projectmanagment;User Id=db_a4843b_projectmanagment_admin;Password=Uniqtech@12345#;TrustServerCertificate=True;MultipleActiveResultSets=True;Encrypt=True";
 
 var optionsBuilder = new DbContextOptionsBuilder<VisionDbContext>();
 optionsBuilder.UseSqlServer(connectionString);
