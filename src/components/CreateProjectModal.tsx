@@ -1,15 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { Bug, Check, FolderPlus, Kanban, Layers, Settings2, Trash2, X } from 'lucide-react';
+import { FolderPlus, Settings2, Trash2, X } from 'lucide-react';
+// Template picker is hidden for now: import { Bug, Check, Kanban, Layers } from 'lucide-react';
 import { useProject } from '../context/ProjectContext';
 import type { Project, ProjectMember, WorkItemType } from '../types';
 import { WorkItemIcon } from './WorkItemIcon';
 import { Alert, Avatar, Field, Modal, PrimaryButton, SecondaryButton, inputClass, inputErrorClass } from './ui';
 
-const TEMPLATES = [
-  { id: 'Scrum', label: 'Scrum', icon: <Layers className="w-3.5 h-3.5 text-blue-600" />, desc: 'Sprints, backlog and story points' },
-  { id: 'Kanban', label: 'Kanban', icon: <Kanban className="w-3.5 h-3.5 text-amber-600" />, desc: 'Continuous flow with WIP limits' },
-  { id: 'Bug Tracking', label: 'Bug tracking', icon: <Bug className="w-3.5 h-3.5 text-rose-600" />, desc: 'Defect intake, triage and escalation' }
-] as const;
+// Template picker is hidden for now.
+// const TEMPLATES = [
+//   { id: 'Scrum', label: 'Scrum', icon: <Layers className="w-3.5 h-3.5 text-blue-600" />, desc: 'Sprints, backlog and story points' },
+//   { id: 'Kanban', label: 'Kanban', icon: <Kanban className="w-3.5 h-3.5 text-amber-600" />, desc: 'Continuous flow with WIP limits' },
+//   { id: 'Bug Tracking', label: 'Bug tracking', icon: <Bug className="w-3.5 h-3.5 text-rose-600" />, desc: 'Defect intake, triage and escalation' }
+// ] as const;
 
 const WORK_ITEM_TYPES: { type: WorkItemType; label: string; desc: string }[] = [
   { type: 'epic', label: 'Epic', desc: 'Large initiative spanning several sprints' },
@@ -74,9 +76,9 @@ const ProjectForm: React.FC<{ editing: Project | null }> = ({ editing }) => {
   const [keyTouched, setKeyTouched] = useState(isEdit);
   const [description, setDescription] = useState(editing?.description ?? '');
   const [leadId, setLeadId] = useState(editing?.lead.id ?? currentUser.id);
-  const [template, setTemplate] = useState<Project['template']>(editing?.template ?? 'Scrum');
+  const [template] = useState<Project['template']>(editing?.template ?? 'Scrum');
   const [defaultAssignee, setDefaultAssignee] = useState<Project['defaultAssignee']>(editing?.defaultAssignee ?? 'unassigned');
-  const [iconGradient, setIconGradient] = useState(editing?.iconGradient ?? COLORS[0].class);
+  const [iconGradient] = useState(editing?.iconGradient ?? COLORS[0].class);
   const [types, setTypes] = useState<WorkItemType[]>(editing?.allowedIssueTypes ?? ['epic', 'story', 'task', 'bug', 'spike']);
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -185,54 +187,56 @@ const ProjectForm: React.FC<{ editing: Project | null }> = ({ editing }) => {
           )}
         </Field>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        {/* Template picker - hidden for now (defaults to Scrum)
+        <fieldset>
+          <legend className="block text-xs font-semibold text-slate-700 mb-1">Template</legend>
+          <div className="space-y-1.5">
+            {TEMPLATES.map(t => (
+              <label key={t.id} className={`flex items-start gap-2.5 p-2.5 rounded-lg border text-xs cursor-pointer transition-all ${
+                template === t.id ? 'bg-blue-50/70 border-blue-400 shadow-2xs' : 'bg-slate-50 border-slate-200 hover:bg-slate-100/60'
+              }`}>
+                <input type="radio" name="template" value={t.id} checked={template === t.id} onChange={() => setTemplate(t.id)} className="sr-only" />
+                <span className="mt-0.5">{t.icon}</span>
+                <span className="flex-1">
+                  <span className="block font-semibold text-slate-800">{t.label}</span>
+                  <span className="block text-[10px] text-slate-500">{t.desc}</span>
+                </span>
+                {template === t.id && <Check className="w-3.5 h-3.5 text-blue-600 mt-0.5" />}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        */}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Field label="Project lead" hint="Becomes the project owner.">
+            {({ id, describedBy }) => (
+              <select id={id} aria-describedby={describedBy} className={inputClass} value={leadId} onChange={e => setLeadId(e.target.value)}>
+                {teamMembers.filter(m => m.status !== 'invited' || m.id === leadId).map(m => (
+                  <option key={m.id} value={m.id}>{m.name} · {m.role}</option>
+                ))}
+              </select>
+            )}
+          </Field>
+          <Field label="Default assignee for new work items">
+            {({ id, describedBy }) => (
+              <select id={id} aria-describedby={describedBy} className={inputClass} value={defaultAssignee} onChange={e => setDefaultAssignee(e.target.value as Project['defaultAssignee'])}>
+                <option value="unassigned">Unassigned</option>
+                <option value="lead">Project lead</option>
+              </select>
+            )}
+          </Field>
+          {/* Color picker - hidden for now (defaults to Ocean blue)
           <fieldset>
-            <legend className="block text-xs font-semibold text-slate-700 mb-1">Template</legend>
-            <div className="space-y-1.5">
-              {TEMPLATES.map(t => (
-                <label key={t.id} className={`flex items-start gap-2.5 p-2.5 rounded-lg border text-xs cursor-pointer transition-all ${
-                  template === t.id ? 'bg-blue-50/70 border-blue-400 shadow-2xs' : 'bg-slate-50 border-slate-200 hover:bg-slate-100/60'
-                }`}>
-                  <input type="radio" name="template" value={t.id} checked={template === t.id} onChange={() => setTemplate(t.id)} className="sr-only" />
-                  <span className="mt-0.5">{t.icon}</span>
-                  <span className="flex-1">
-                    <span className="block font-semibold text-slate-800">{t.label}</span>
-                    <span className="block text-[10px] text-slate-500">{t.desc}</span>
-                  </span>
-                  {template === t.id && <Check className="w-3.5 h-3.5 text-blue-600 mt-0.5" />}
-                </label>
+            <legend className="block text-xs font-semibold text-slate-700 mb-1">Color</legend>
+            <div className="grid grid-cols-6 gap-2">
+              {COLORS.map(c => (
+                <button key={c.class} type="button" onClick={() => setIconGradient(c.class)} aria-label={c.label} aria-pressed={iconGradient === c.class}
+                  className={`h-7 rounded-lg bg-gradient-to-tr ${c.class} transition-all cursor-pointer ${iconGradient === c.class ? 'ring-2 ring-slate-900 ring-offset-1' : 'opacity-80 hover:opacity-100'}`} />
               ))}
             </div>
           </fieldset>
-
-          <div className="space-y-4">
-            <Field label="Project lead" hint="Becomes the project owner.">
-              {({ id, describedBy }) => (
-                <select id={id} aria-describedby={describedBy} className={inputClass} value={leadId} onChange={e => setLeadId(e.target.value)}>
-                  {teamMembers.filter(m => m.status !== 'invited' || m.id === leadId).map(m => (
-                    <option key={m.id} value={m.id}>{m.name} · {m.role}</option>
-                  ))}
-                </select>
-              )}
-            </Field>
-            <Field label="Default assignee for new work items">
-              {({ id, describedBy }) => (
-                <select id={id} aria-describedby={describedBy} className={inputClass} value={defaultAssignee} onChange={e => setDefaultAssignee(e.target.value as Project['defaultAssignee'])}>
-                  <option value="unassigned">Unassigned</option>
-                  <option value="lead">Project lead</option>
-                </select>
-              )}
-            </Field>
-            <fieldset>
-              <legend className="block text-xs font-semibold text-slate-700 mb-1">Color</legend>
-              <div className="grid grid-cols-6 gap-2">
-                {COLORS.map(c => (
-                  <button key={c.class} type="button" onClick={() => setIconGradient(c.class)} aria-label={c.label} aria-pressed={iconGradient === c.class}
-                    className={`h-7 rounded-lg bg-gradient-to-tr ${c.class} transition-all cursor-pointer ${iconGradient === c.class ? 'ring-2 ring-slate-900 ring-offset-1' : 'opacity-80 hover:opacity-100'}`} />
-                ))}
-              </div>
-            </fieldset>
-          </div>
+          */}
         </div>
 
         {/* Team members (create only; afterwards they are managed on the Members page) */}
