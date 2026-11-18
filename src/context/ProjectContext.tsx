@@ -32,14 +32,7 @@ import {
   ProjectMember,
   ProjectRole
 } from '../types';
-import {
-  TEAM_MEMBERS,
-  INITIAL_PROJECTS,
-  INITIAL_COLUMNS,
-  INITIAL_SPRINTS,
-  INITIAL_ISSUES,
-  INITIAL_NOTIFICATIONS
-} from '../data/mockData';
+import { INITIAL_COLUMNS } from '../data/mockData';
 
 interface ProjectContextType {
   // Data
@@ -121,27 +114,34 @@ interface ProjectContextType {
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-/** Reads saved state, falling back to the older 'omniplane_*' keys, then to the demo data. */
-function loadSaved<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(`vision_${key}`) ?? localStorage.getItem(`omniplane_${key}`);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 const ROLE_RANK: Record<ProjectRole, number> = { viewer: 0, member: 1, admin: 2, owner: 3 };
 export const canManageProject = (role: ProjectRole | null) => !!role && ROLE_RANK[role] >= ROLE_RANK.admin;
 export const canEditWork = (role: ProjectRole | null) => !!role && ROLE_RANK[role] >= ROLE_RANK.member;
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
-// The mock API's seeded demo accounts correspond to people in the demo workspace data.
-// Linking them keeps the issues, comments and notifications that belong to those people.
-const SEEDED_ACCOUNT_TO_TEAM_MEMBER: Record<string, string> = {
-  '00000000-0000-0000-0000-000000000001': 'user-1', // Sarah Jenkins
-  '00000000-0000-0000-0000-000000000002': 'user-2' // Alex Rivera
+const EMPTY_USER: User = withAvatar({
+  id: '0',
+  name: 'User',
+  email: '',
+  avatar: '',
+  role: '',
+  department: '',
+  status: 'online'
+});
+
+const EMPTY_PROJECT: Project = {
+  id: '0',
+  name: 'No Project Selected',
+  key: 'PRJ',
+  description: '',
+  lead: EMPTY_USER,
+  template: 'Scrum',
+  allowedIssueTypes: ['epic', 'story', 'task', 'bug'],
+  defaultAssignee: 'unassigned',
+  iconGradient: 'from-blue-600 via-indigo-600 to-sky-500',
+  createdAt: new Date().toISOString(),
+  members: []
 };
 
 const normalizeProject = (project: Project): Project => ({
@@ -182,15 +182,14 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   const { user: authUser } = useAuth();
 
   const [projects, setProjects] = useState<Project[]>([]);
-
-  const [activeProject, setActiveProject] = useState<Project>(() => INITIAL_PROJECTS[0]);
+  const [activeProject, setActiveProject] = useState<Project>(EMPTY_PROJECT);
 
   const [issues, setIssues] = useState<Issue[]>([]);
   const [columns, setColumns] = useState<KanbanColumn[]>(() => INITIAL_COLUMNS);
   const [sprints, setSprints] = useState<Sprint[]>([]);
-  const [teamMembers, setTeamMembers] = useState<User[]>(() => loadSaved('team_members', TEAM_MEMBERS));
-  const [currentUser, setCurrentUser] = useState<User>(() => loadSaved('current_user', TEAM_MEMBERS[1]));
-  const [notifications, setNotifications] = useState<AppNotification[]>(() => loadSaved('notifications', INITIAL_NOTIFICATIONS));
+  const [teamMembers, setTeamMembers] = useState<User[]>([]);
+  const [currentUser, setCurrentUser] = useState<User>(EMPTY_USER);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
 
@@ -208,20 +207,21 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
 
-  // Realtime simulation state
+  // Realtime status indicator
   const [realtimeStatus, setRealtimeStatus] = useState<'connected' | 'syncing'>('connected');
   const [lastSyncTime, setLastSyncTime] = useState<Date>(new Date());
   const [recentActivity, setRecentActivity] = useState<{ text: string; time: string; key?: string }[]>([
-    { text: 'Workspace loaded from local browser storage', time: 'Just now' },
-    { text: 'Sprint 24 active with 34 committed story points in Vision', time: '5m ago' }
+    { text: 'Connected to Vision API', time: 'Just now' }
   ]);
 
   // Load real users, projects, lookups, sprints, and work items from the .NET API when signed in.
   useEffect(() => {
     if (!authUser) {
       setProjects([]);
+      setActiveProject(EMPTY_PROJECT);
       setIssues([]);
       setSprints([]);
+      setTeamMembers([]);
       return;
     }
 
@@ -333,26 +333,12 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   // The signed-in account is the current user.
   useEffect(() => {
     if (!authUser) return;
-    const linkedId = SEEDED_ACCOUNT_TO_TEAM_MEMBER[authUser.id];
-    const linked = linkedId ? TEAM_MEMBERS.find(m => m.id === linkedId) : undefined;
-    const profile = { name: authUser.name, email: authUser.email, role: authUser.role, department: authUser.department };
-    // Seeded demo accounts keep their workspace identity (id, photo); everyone else is used as-is.
-    const me: User = withAvatar(linked ? { ...linked, ...profile, status: 'online' } : { ...authUser, status: 'online' });
+    const me: User = withAvatar({ ...authUser, status: 'online' });
     setCurrentUser(me);
 
-    // Someone invited by email who now signs in with that address takes over the invitation:
-    // their project memberships and assigned work move to the real account.
-    const invited = teamMembers.find(u => u.status === 'invited' && u.id !== me.id && u.email.toLowerCase() === me.email.toLowerCase());
-    if (invited) {
-      setProjects(ps => ps.map(p => (p.members?.some(m => m.userId === invited.id)
-        ? { ...p, members: p.members.map(m => (m.userId === invited.id ? { ...m, userId: me.id } : m)) }
-        : p)));
-      setIssues(is => is.map(i => (i.assignee?.id === invited.id ? { ...i, assignee: me } : i)));
-    }
-    setTeamMembers(prev => {
-      const base = invited ? prev.filter(u => u.id !== invited.id) : prev;
-      return base.some(u => u.id === me.id) ? base.map(u => (u.id === me.id ? { ...u, ...me } : u)) : [me, ...base];
-    });
+    setTeamMembers(prev =>
+      prev.some(u => u.id === me.id) ? prev.map(u => (u.id === me.id ? { ...u, ...me } : u)) : [me, ...prev]
+    );
   }, [authUser]);
 
   useEffect(() => {

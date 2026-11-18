@@ -1,47 +1,53 @@
 # Vision
 
-Project and sprint management: home page, sign-up and sign-in, dashboard, projects, project members and roles, Kanban board, backlog and sprints, work items, analytics, team directory, and profile settings.
+Project and sprint management application with a React + TypeScript frontend and a `.NET 8` Web API backend connected to Microsoft SQL Server.
 
-| Part | Stack | Folder |
+| Part | Stack | Location |
 |---|---|---|
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS | `src/` |
-| Backend | .NET 8 Web API | `backend/` (see [backend/README.md](backend/README.md)) |
-| Database | Microsoft SQL Server | `backend/Vision.Data` |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS, Axios, React Toastify | `src/` |
+| Backend | .NET 8 Web API, Entity Framework Core, JWT Bearer Auth, Swagger | `backend/Vision.API/` |
+| Database | Microsoft SQL Server | `docs/Vision_MSSQL_Proper_Schema.sql` |
 
-## Run the frontend
+## Prerequisites
 
-**Prerequisite:** Node.js 20 or newer.
+- **Node.js** 20+
+- **.NET 8 SDK / Runtime**
+- **Microsoft SQL Server** with [docs/Vision_MSSQL_Proper_Schema.sql](docs/Vision_MSSQL_Proper_Schema.sql) executed
 
-```bash
-npm install
-npm run dev        # opens http://localhost:5173 (also reachable as http://127.0.0.1:5173)
-```
+## Quick Start
 
-| Address | Page |
-|---|---|
-| `/` | Home page (signed-in users see an "Open dashboard" button) |
-| `/app` | The workspace (dashboard, board, backlog, members, …); signed-out visitors are sent to sign in |
-| `/reset-password?token=…` | Password reset link from email |
-
-When hosting the production build (`dist/`), configure the web server to serve `index.html` for these paths (SPA fallback).
-
-The frontend calls the API at `/api`, which Vite forwards to `http://localhost:5286` (the .NET `http` launch profile). Start the API with:
+### 1. Run the .NET Backend API
 
 ```bash
 dotnet run --project backend/Vision.API --launch-profile http
 ```
 
-**Without the backend:** in development, if the API can't be reached, sign-in falls back to **offline demo mode** with local accounts. The footer and account menu show this. Every page still works, and data is saved in the browser. Demo accounts (the same as the mock API's): `test@test.com` / `test`, `alex@vision.dev` / `password123`, `sarah@vision.dev` / `password123`. To change this behaviour, set `VITE_AUTH_MODE` (see [.env.example](.env.example)).
+- API Base URL: `http://localhost:5286/api/`
+- Swagger UI: `http://localhost:5286/swagger`
 
-## Scripts
+### 2. Run the React Frontend
+
+```bash
+npm install
+npm run dev
+```
+
+- Frontend URL: `http://localhost:5173` (or `http://127.0.0.1:5173`)
+- Optional: copy `.env.example` to `.env.local` if your backend runs on a different port.
+
+## Implemented API Endpoints
+
+| Controller | Endpoints |
+|---|---|
+| `AuthController` (`/api/Auth`) | `POST signup`, `POST login`, `POST logout`, `GET me` |
+| `ProjectController` (`/api/Project`) | `GET GetUsers`, `GET GetProjectList`, `GET GetProjectById/{id}`, `POST SaveProject`, `PUT UpdateProject/{id}`, `DELETE DeleteProject/{id}` |
+| `WorkItemController` (`/api/WorkItem`) | `GET GetLookups`, `GET GetWorkItemList`, `GET GetWorkItemById/{id}`, `POST SaveWorkItem`, `PUT UpdateWorkItem/{id}`, `DELETE DeleteWorkItem/{id}` |
+
+## Frontend Scripts
 
 | Command | Purpose |
 |---|---|
-| `npm run dev` | Development server |
+| `npm run dev` | Start Vite development server |
 | `npm run build` | Production build into `dist/` |
-| `npm run preview` | Serve the production build |
-| `npm run lint` | Type-check (`tsc --noEmit`) |
-
-## For backend and database developers
-
-[docs/API_CONTRACT.md](docs/API_CONTRACT.md) lists every form, its fields and validation, and the endpoint and JSON the frontend expects. The same shapes are typed in [src/types/api.ts](src/types/api.ts).
+| `npm run preview` | Preview the production build |
+| `npm run lint` | TypeScript type-check (`tsc --noEmit`) |

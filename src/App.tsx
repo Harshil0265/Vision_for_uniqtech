@@ -82,7 +82,7 @@ const AppContent: React.FC = () => {
               }`}
             />
             <span className="font-mono text-[10px] text-slate-500 font-medium">
-              Workspace data saved in this browser
+              Connected to Vision API
             </span>
           </div>
 
