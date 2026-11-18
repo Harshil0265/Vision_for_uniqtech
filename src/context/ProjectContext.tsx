@@ -32,7 +32,14 @@ import {
   ProjectMember,
   ProjectRole
 } from '../types';
-import { INITIAL_COLUMNS } from '../data/mockData';
+const DEFAULT_COLUMNS: KanbanColumn[] = [
+  { id: 'backlog', name: 'Backlog', wipLimit: 0, color: '#64748b', category: 'todo' },
+  { id: 'todo', name: 'To Do', wipLimit: 8, color: '#2563eb', category: 'todo' },
+  { id: 'in_progress', name: 'In Progress', wipLimit: 4, color: '#d97706', category: 'in_progress' },
+  { id: 'code_review', name: 'Code Review', wipLimit: 3, color: '#7c3aed', category: 'in_progress' },
+  { id: 'qa_staging', name: 'QA & Staging', wipLimit: 3, color: '#db2777', category: 'in_progress' },
+  { id: 'done', name: 'Done', wipLimit: 0, color: '#059669', category: 'done' }
+];
 
 interface ProjectContextType {
   // Data
@@ -185,7 +192,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [activeProject, setActiveProject] = useState<Project>(EMPTY_PROJECT);
 
   const [issues, setIssues] = useState<Issue[]>([]);
-  const [columns, setColumns] = useState<KanbanColumn[]>(() => INITIAL_COLUMNS);
+  const [columns, setColumns] = useState<KanbanColumn[]>(() => DEFAULT_COLUMNS);
   const [sprints, setSprints] = useState<Sprint[]>([]);
   const [teamMembers, setTeamMembers] = useState<User[]>([]);
   const [currentUser, setCurrentUser] = useState<User>(EMPTY_USER);
@@ -276,9 +283,11 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     return () => { cancelled = true; };
   }, [authUser?.id]);
 
-  // Persist state
+  // Persist only the selected project ID across page reloads.
   useEffect(() => {
-    localStorage.setItem('vision_active_project_id', activeProject.id);
+    if (activeProject.id !== '0') {
+      localStorage.setItem('vision_active_project_id', activeProject.id);
+    }
   }, [activeProject]);
 
   // If the active project was edited or deleted, follow the stored copy.
@@ -290,26 +299,6 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       setActiveProject(fresh);
     }
   }, [projects]);
-
-  useEffect(() => {
-    localStorage.setItem('vision_issues', JSON.stringify(issues));
-  }, [issues]);
-
-  useEffect(() => {
-    localStorage.setItem('vision_columns', JSON.stringify(columns));
-  }, [columns]);
-
-  useEffect(() => {
-    localStorage.setItem('vision_sprints', JSON.stringify(sprints));
-  }, [sprints]);
-
-  useEffect(() => {
-    localStorage.setItem('vision_team_members', JSON.stringify(teamMembers));
-  }, [teamMembers]);
-
-  useEffect(() => {
-    localStorage.setItem('vision_current_user', JSON.stringify(currentUser));
-  }, [currentUser]);
 
   // A different account signing in (or signing out) starts from a clean view, not the last user's screen.
   const viewOwner = useRef<string | null | undefined>(undefined);
@@ -340,10 +329,6 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       prev.some(u => u.id === me.id) ? prev.map(u => (u.id === me.id ? { ...u, ...me } : u)) : [me, ...prev]
     );
   }, [authUser]);
-
-  useEffect(() => {
-    localStorage.setItem('vision_notifications', JSON.stringify(notifications));
-  }, [notifications]);
 
   // Sync selected issue if issues change
   useEffect(() => {

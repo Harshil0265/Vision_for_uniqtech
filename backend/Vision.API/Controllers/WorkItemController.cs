@@ -366,6 +366,20 @@ namespace Vision.API.Controllers
                     workItem.DueDate = DateTime.TryParse(request.DueDate, out var parsed) ? parsed.Date : null;
                 }
 
+                if (request.EpicKey != null)
+                {
+                    if (string.IsNullOrWhiteSpace(request.EpicKey))
+                    {
+                        workItem.ParentEpicId = null;
+                    }
+                    else
+                    {
+                        var epicKey = request.EpicKey.Trim().ToUpperInvariant();
+                        var epic = await _context.WorkItems.FirstOrDefaultAsync(w => w.ProjectId == workItem.ProjectId && w.WorkItemKey.ToUpper() == epicKey && w.Id != id);
+                        workItem.ParentEpicId = epic?.Id;
+                    }
+                }
+
                 if (request.Labels != null)
                 {
                     var existingLabels = await _context.WorkItemLabels.Where(l => l.WorkItemId == id).ToListAsync();
