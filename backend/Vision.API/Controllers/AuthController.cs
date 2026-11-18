@@ -72,7 +72,7 @@ public class AuthController : ControllerBase
         {
             _logger.LogError(ex, "Error occurred during Login for {Email}", request.Email);
             return StatusCode(500, new { success = false, error = "An unexpected error occurred during sign in." });
-        }
+        } 
     }
 
     /// <summary>
