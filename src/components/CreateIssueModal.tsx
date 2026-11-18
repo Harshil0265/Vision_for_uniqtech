@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { ListPlus, X } from 'lucide-react';
+import { toast } from 'react-toastify';
 import { canEditWork, useProject } from '../context/ProjectContext';
 import type { Priority, WorkItemType } from '../types';
 import { WorkItemIcon } from './WorkItemIcon';
@@ -115,7 +116,10 @@ const IssueForm: React.FC = () => {
     if (description.length > 5000) next.description = 'Use 5000 characters or fewer.';
     if (dueDate && dueDate < todayIso()) next.dueDate = 'The due date cannot be in the past.';
     setErrors(next);
-    if (Object.keys(next).length > 0) return;
+    if (Object.keys(next).length > 0) {
+      toast.error(Object.values(next)[0]);
+      return;
+    }
 
     const pendingLabel = labelDraft.trim().toLowerCase().replace(/\s+/g, '-');
     const finalLabels = pendingLabel && !labels.includes(pendingLabel) && pendingLabel.length <= 24 && labels.length < 10
@@ -123,7 +127,7 @@ const IssueForm: React.FC = () => {
     const epic = epics.find(i => i.key === epicKey);
 
     setSubmitting(true);
-    await createIssue({
+    const created = await createIssue({
       projectId,
       type,
       title: title.trim(),
@@ -139,7 +143,7 @@ const IssueForm: React.FC = () => {
       epicTitle: epic?.title
     });
     setSubmitting(false);
-    close();
+    if (created) close();
   };
 
   if (!project) {

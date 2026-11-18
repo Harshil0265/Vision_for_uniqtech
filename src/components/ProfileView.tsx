@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Eye, EyeOff, KeyRound, LogOut, ServerCrash, ShieldCheck, UserCircle2 } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, LogOut, ShieldCheck, UserCircle2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useProject } from '../context/ProjectContext';
 import { getSessionExpiry } from '../lib/authClient';
@@ -17,7 +17,7 @@ const toneOf = (o: ActionOutcome) => (o.status === 'ok' ? 'success' : o.status =
 
 /** The signed-in user's profile, password and session. */
 export const ProfileView: React.FC = () => {
-  const { user, mode, updateProfile, changePassword, signOut } = useAuth();
+  const { user, updateProfile, changePassword, signOut } = useAuth();
   const { currentUser } = useProject();
 
   // ---- profile form
@@ -169,15 +169,13 @@ export const ProfileView: React.FC = () => {
         <Card title="Session">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-start gap-3">
-              {mode === 'local' ? <ServerCrash className="w-5 h-5 text-amber-600 mt-0.5" /> : <ShieldCheck className="w-5 h-5 text-emerald-600 mt-0.5" />}
+              <ShieldCheck className="w-5 h-5 text-emerald-600 mt-0.5" />
               <div>
                 <div className="text-xs font-semibold text-slate-900">
-                  {mode === 'local' ? 'Offline demo mode' : 'Signed in through the Vision API'}
+                  Signed in through the Vision API
                 </div>
                 <p className="text-[11px] text-slate-500 mt-0.5 max-w-md">
-                  {mode === 'local'
-                    ? 'The backend could not be reached, so this demo account lives only in this browser. Start the API and sign in again to use real accounts.'
-                    : 'Your session token is stored in this browser and sent with each request to the API.'}
+                  Your session token is stored in this browser and sent with each request to the API.
                 </p>
                 {expiry > 0 && (
                   <p className="text-[11px] text-slate-400 mt-1">Session expires {new Date(expiry).toLocaleString()}</p>

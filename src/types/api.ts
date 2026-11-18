@@ -28,7 +28,7 @@ export type UserDto = User; // id, name, email, avatar, role (job title), depart
 
 export interface SignupRequest { name: string; email: string; password: string; role?: string; department?: string }
 export interface LoginRequest { email: string; password: string }
-export interface AuthResponse { success: true; token: string; user: UserDto }
+export interface AuthResponse { success: true; token: string; user: UserDto; message?: string }
 export interface MeResponse { success: true; user: UserDto }
 export interface ForgotPasswordRequest { email: string }
 export interface ResetPasswordRequest { token: string; newPassword: string }

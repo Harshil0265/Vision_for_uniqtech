@@ -8,7 +8,7 @@ const initialsOf = (name: string) =>
 
 /** Avatar button in the top bar with the signed-in account and a sign-out action. */
 export const AccountMenu: React.FC = () => {
-  const { user, signOut, mode } = useAuth();
+  const { user, signOut } = useAuth();
   const { setActiveTab } = useProject();
   const [open, setOpen] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
@@ -58,9 +58,6 @@ export const AccountMenu: React.FC = () => {
           <div className="px-3 py-3 border-b border-slate-100">
             <div className="text-sm font-semibold text-slate-900 truncate">{user.name}</div>
             <div className="text-[11px] text-slate-500 truncate">{user.email}</div>
-            {mode === 'local' && (
-              <div className="mt-1.5 inline-block text-[10px] font-semibold px-1.5 py-px rounded bg-amber-50 text-amber-700 border border-amber-200">Offline demo account</div>
-            )}
             {(user.role || user.department) && (
               <div className="text-[11px] text-slate-400 truncate mt-0.5">{[user.role, user.department].filter(Boolean).join(' · ')}</div>
             )}

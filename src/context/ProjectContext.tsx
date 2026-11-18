@@ -1,7 +1,23 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode, useMemo } from 'react';
+import axios from 'axios';
 import confetti from 'canvas-confetti';
+import { toast } from 'react-toastify';
 import { useAuth } from './AuthContext';
 import { withAvatar } from '../lib/avatar';
+import {
+  deleteProjectApi,
+  getProjectList,
+  getProjectUsers,
+  saveProject,
+  updateProjectApi
+} from '../api/projectApi';
+import {
+  deleteWorkItemApi,
+  getWorkItemList,
+  getWorkItemLookups,
+  saveWorkItem,
+  updateWorkItemApi
+} from '../api/workItemApi';
 import {
   Issue,
   KanbanColumn,
@@ -71,10 +87,10 @@ interface ProjectContextType {
   setSelectedIssue: (issue: Issue | null) => void;
 
   // Actions
-  createProject: (data: Partial<Project>) => Project;
-  updateProject: (id: string, updates: Partial<Project>) => void;
-  deleteProject: (id: string) => void;
-  createIssue: (issue: Partial<Issue>) => Promise<Issue>;
+  createProject: (data: Partial<Project>) => Promise<Project | null>;
+  updateProject: (id: string, updates: Partial<Project>) => Promise<boolean>;
+  deleteProject: (id: string) => Promise<boolean>;
+  createIssue: (issue: Partial<Issue>) => Promise<Issue | null>;
   updateIssue: (id: string, updates: Partial<Issue>) => void;
   deleteIssue: (id: string) => void;
   moveIssueStatus: (issueId: string, newStatus: string) => void;
@@ -128,22 +144,50 @@ const SEEDED_ACCOUNT_TO_TEAM_MEMBER: Record<string, string> = {
   '00000000-0000-0000-0000-000000000002': 'user-2' // Alex Rivera
 };
 
+const normalizeProject = (project: Project): Project => ({
+  ...project,
+  lead: withAvatar(project.lead)
+});
+
+const normalizeIssue = (issue: Issue): Issue => ({
+  ...issue,
+  reporter: withAvatar(issue.reporter),
+  assignee: issue.assignee ? withAvatar(issue.assignee) : null
+});
+
+const toWorkItemPayload = (issue: Issue) => ({
+  projectId: Number(issue.projectId) || 0,
+  type: issue.type,
+  title: issue.title,
+  description: issue.description,
+  priority: issue.priority,
+  status: issue.status,
+  assigneeId: issue.assignee ? Number(issue.assignee.id) || null : null,
+  sprintId: issue.sprintId && issue.sprintId !== 'backlog' ? Number(issue.sprintId) || null : null,
+  storyPoints: issue.storyPoints,
+  dueDate: issue.dueDate ?? null,
+  epicKey: issue.epicKey ?? null,
+  labels: issue.labels ?? []
+});
+
+const getApiErrorMessage = (err: unknown, fallback: string): string => {
+  if (axios.isAxiosError(err)) {
+    const data = err.response?.data as { error?: string; message?: string } | undefined;
+    return data?.error || data?.message || fallback;
+  }
+  return fallback;
+};
+
 export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { user: authUser } = useAuth();
 
-  // Projects
-  // Workspace data is kept in this browser (localStorage) until the backend exposes the data endpoints
-  // described in docs/API_CONTRACT.md.
-  const [projects, setProjects] = useState<Project[]>(() => loadSaved('projects', INITIAL_PROJECTS));
+  const [projects, setProjects] = useState<Project[]>([]);
 
-  const [activeProject, setActiveProject] = useState<Project>(() => {
-    const savedId = localStorage.getItem('vision_active_project_id') ?? localStorage.getItem('omniplane_active_project_id');
-    return projects.find(p => p.id === savedId) || projects[0] || INITIAL_PROJECTS[0];
-  });
+  const [activeProject, setActiveProject] = useState<Project>(() => INITIAL_PROJECTS[0]);
 
-  const [issues, setIssues] = useState<Issue[]>(() => loadSaved('issues', INITIAL_ISSUES));
-  const [columns, setColumns] = useState<KanbanColumn[]>(() => loadSaved('columns', INITIAL_COLUMNS));
-  const [sprints, setSprints] = useState<Sprint[]>(() => loadSaved('sprints', INITIAL_SPRINTS));
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [columns, setColumns] = useState<KanbanColumn[]>(() => INITIAL_COLUMNS);
+  const [sprints, setSprints] = useState<Sprint[]>([]);
   const [teamMembers, setTeamMembers] = useState<User[]>(() => loadSaved('team_members', TEAM_MEMBERS));
   const [currentUser, setCurrentUser] = useState<User>(() => loadSaved('current_user', TEAM_MEMBERS[1]));
   const [notifications, setNotifications] = useState<AppNotification[]>(() => loadSaved('notifications', INITIAL_NOTIFICATIONS));
@@ -172,11 +216,67 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     { text: 'Sprint 24 active with 34 committed story points in Vision', time: '5m ago' }
   ]);
 
-  // Persist state
+  // Load real users, projects, lookups, sprints, and work items from the .NET API when signed in.
   useEffect(() => {
-    localStorage.setItem('vision_projects', JSON.stringify(projects));
-  }, [projects]);
+    if (!authUser) {
+      setProjects([]);
+      setIssues([]);
+      setSprints([]);
+      return;
+    }
 
+    let cancelled = false;
+
+    const loadWorkspaceData = async () => {
+      try {
+        const [usersRes, projectsRes, lookupsRes, workItemsRes] = await Promise.all([
+          getProjectUsers(),
+          getProjectList(),
+          getWorkItemLookups(),
+          getWorkItemList()
+        ]);
+
+        if (cancelled) return;
+
+        if (usersRes?.success && Array.isArray(usersRes.users)) {
+          setTeamMembers(usersRes.users.map(u => withAvatar(u)));
+        }
+
+        if (projectsRes?.success && Array.isArray(projectsRes.projects)) {
+          const apiProjects = projectsRes.projects.map(normalizeProject);
+          setProjects(apiProjects);
+
+          const savedId = localStorage.getItem('vision_active_project_id');
+          const nextActive = apiProjects.find(p => p.id === savedId) || apiProjects[0];
+          if (nextActive) {
+            setActiveProject(nextActive);
+          }
+        }
+
+        if (lookupsRes?.success) {
+          if (Array.isArray(lookupsRes.columns) && lookupsRes.columns.length > 0) {
+            setColumns(lookupsRes.columns);
+          }
+          if (Array.isArray(lookupsRes.sprints)) {
+            setSprints(lookupsRes.sprints);
+          }
+        }
+
+        if (workItemsRes?.success && Array.isArray(workItemsRes.workItems)) {
+          setIssues(workItemsRes.workItems.map(normalizeIssue));
+        }
+      } catch (err) {
+        if (!cancelled) {
+          toast.error(getApiErrorMessage(err, 'Failed to load workspace data from server.'));
+        }
+      }
+    };
+
+    void loadWorkspaceData();
+    return () => { cancelled = true; };
+  }, [authUser?.id]);
+
+  // Persist state
   useEffect(() => {
     localStorage.setItem('vision_active_project_id', activeProject.id);
   }, [activeProject]);
@@ -297,244 +397,233 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     setFilterOnlyMyIssues(false);
   };
 
-  const initialMembers = (lead: User): ProjectMember[] => {
-    const now = new Date().toISOString();
-    const list: ProjectMember[] = [{ userId: lead.id, role: 'owner', addedAt: now }];
-    if (lead.id !== currentUser.id) list.push({ userId: currentUser.id, role: 'admin', addedAt: now });
-    return list;
-  };
+  const createProject = async (data: Partial<Project>): Promise<Project | null> => {
+    const key = (data.key || '').toUpperCase().trim();
+    const leadId = Number(data.lead?.id ?? currentUser.id) || 0;
+    const memberIds = (data.members || [])
+      .map(m => Number(m.userId))
+      .filter(id => Number.isFinite(id) && id > 0);
 
-  const createProject = (data: Partial<Project>): Project => {
-    const key = (data.key || 'PROJ').toUpperCase().trim();
-    const newProject: Project = {
-      id: `proj-${Date.now()}`,
-      name: data.name || 'Untitled Project',
-      key,
-      description: data.description || '',
-      lead: data.lead || currentUser,
-      template: data.template || 'Scrum',
-      allowedIssueTypes: data.allowedIssueTypes && data.allowedIssueTypes.length > 0
-        ? data.allowedIssueTypes
-        : ['epic', 'story', 'task', 'bug'],
-      defaultAssignee: data.defaultAssignee || 'unassigned',
-      iconGradient: data.iconGradient || 'from-blue-600 via-indigo-600 to-sky-500',
-      createdAt: new Date().toISOString(),
-      members: data.members && data.members.length > 0 ? data.members : initialMembers(data.lead || currentUser)
-    };
+    try {
+      const res = await saveProject({
+        name: (data.name || '').trim(),
+        key,
+        description: (data.description || '').trim(),
+        leadId,
+        defaultAssignee: data.defaultAssignee || 'unassigned',
+        allowedIssueTypes:
+          data.allowedIssueTypes && data.allowedIssueTypes.length > 0
+            ? data.allowedIssueTypes
+            : ['epic', 'story', 'task', 'bug'],
+        memberIds
+      });
 
-    setProjects(prev => [...prev, newProject]);
-    setActiveProject(newProject);
+      const created = normalizeProject(res.project);
+      setProjects(prev => [created, ...prev]);
+      setActiveProject(created);
 
-    // Create an initial sprint if Scrum
-    if (newProject.template === 'Scrum') {
-      const initialSprint: Sprint = {
-        id: `sprint-${Date.now()}`,
-        projectId: newProject.id,
-        name: `${newProject.name.split(' ')[0]} Sprint 1`,
-        goal: 'Initial sprint delivery and architecture foundation.',
-        startDate: new Date().toISOString().split('T')[0],
-        endDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
-        status: 'active',
-        plannedPoints: 13,
-        completedPoints: 0
-      };
-      setSprints(prev => [...prev, initialSprint]);
-    }
-
-    setRecentActivity(prev => [
-      { text: `${currentUser.name} created new project: ${newProject.name} [${newProject.key}]`, time: 'Just now' },
-      ...prev
-    ]);
-
-    return newProject;
-  };
-
-  const updateProject = (id: string, updates: Partial<Project>) => {
-    setProjects(prev =>
-      prev.map(p => {
-        if (p.id !== id) return p;
-        const updated = { ...p, ...updates };
-        if (activeProject.id === id) {
-          setActiveProject(updated);
+      // Refresh sprints so the new project's initial active sprint appears immediately.
+      try {
+        const lookupsRes = await getWorkItemLookups();
+        if (lookupsRes?.success && Array.isArray(lookupsRes.sprints)) {
+          setSprints(lookupsRes.sprints);
         }
-        return updated;
-      })
-    );
-  };
+      } catch { /* ignore sprint refresh error */ }
 
-  const deleteProject = (id: string) => {
-    if (projects.length <= 1) {
-      alert('Cannot delete the only remaining project in workspace.');
-      return;
-    }
-    const remaining = projects.filter(p => p.id !== id);
-    setProjects(remaining);
-    if (activeProject.id === id) {
-      setActiveProject(remaining[0]);
-    }
-    // Delete issues & sprints belonging to this project
-    setIssues(prev => prev.filter(i => i.projectId !== id));
-    setSprints(prev => prev.filter(s => s.projectId !== id));
-  };
-
-  const createIssue = async (issueData: Partial<Issue>): Promise<Issue> => {
-    const targetProjectId = issueData.projectId || activeProject.id;
-    const targetProject = projects.find(p => p.id === targetProjectId) || activeProject;
-
-    const highest = issues
-      .filter(i => i.projectId === targetProjectId)
-      .reduce((max, i) => Math.max(max, Number(i.key.split('-').pop()) || 0), 100);
-    const key = `${targetProject.key}-${highest + 1}`;
-
-    const newIssue: Issue = {
-      id: `issue-${Date.now()}`,
-      key,
-      projectId: targetProjectId,
-      title: issueData.title || 'Untitled Work Item',
-      description: issueData.description || '',
-      type: (issueData.type as WorkItemType) || 'task',
-      priority: (issueData.priority as Priority) || 'medium',
-      status: issueData.status || (columns[1] ? columns[1].id : 'todo'),
-      assignee: issueData.assignee || (targetProject.defaultAssignee === 'lead' ? targetProject.lead : null),
-      reporter: currentUser,
-      sprintId: issueData.sprintId !== undefined ? issueData.sprintId : (activeSprint ? activeSprint.id : 'backlog'),
-      storyPoints: issueData.storyPoints ?? 3,
-      labels: issueData.labels || [],
-      subtasks: issueData.subtasks || [],
-      comments: [],
-      activities: [
-        {
-          id: `act-${Date.now()}`,
-          user: currentUser,
-          action: 'created work item',
-          timestamp: new Date().toISOString()
-        }
-      ],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      dueDate: issueData.dueDate
-    };
-
-    setIssues(prev => [newIssue, ...prev]);
-
-    // Add activity stream
-    setRecentActivity(prev => [
-      { text: `${currentUser.name} created ${key}: ${newIssue.title}`, time: 'Just now', key },
-      ...prev.slice(0, 20)
-    ]);
-
-    // In-app notification
-    if (newIssue.assignee && newIssue.assignee.email) {
-      setNotifications(prev => [
-        {
-          id: `notif-${Date.now()}`,
-          title: 'New Issue Assigned',
-          message: `${currentUser.name} assigned ${key} to ${newIssue.assignee?.name}`,
-          timestamp: 'Just now',
-          read: false,
-          type: 'assignment',
-          issueKey: key,
-          author: currentUser
-        },
+      setRecentActivity(prev => [
+        { text: `${currentUser.name} created new project: ${created.name} [${created.key}]`, time: 'Just now' },
         ...prev
       ]);
+
+      toast.success(res.message || 'Project created successfully!');
+      return created;
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Failed to create project.'));
+      return null;
+    }
+  };
+
+  const updateProject = async (id: string, updates: Partial<Project>): Promise<boolean> => {
+    const existing = projects.find(p => p.id === id);
+    if (!existing) return false;
+
+    const leadId = Number(updates.lead?.id ?? existing.lead.id) || 0;
+
+    try {
+      const res = await updateProjectApi(id, {
+        name: (updates.name ?? existing.name).trim(),
+        key: existing.key,
+        description: (updates.description ?? existing.description).trim(),
+        leadId,
+        defaultAssignee: updates.defaultAssignee ?? existing.defaultAssignee,
+        allowedIssueTypes: updates.allowedIssueTypes ?? existing.allowedIssueTypes,
+        memberIds: []
+      });
+
+      const updated = normalizeProject(res.project);
+      setProjects(prev => prev.map(p => (p.id === id ? updated : p)));
+      if (activeProject.id === id) {
+        setActiveProject(updated);
+      }
+      toast.success(res.message || 'Project updated successfully!');
+      return true;
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Failed to update project.'));
+      return false;
+    }
+  };
+
+  const deleteProject = async (id: string): Promise<boolean> => {
+    if (projects.length <= 1) {
+      toast.error('Cannot delete the only remaining project in workspace.');
+      return false;
     }
 
-    return newIssue;
+    try {
+      const res = await deleteProjectApi(id);
+      const remaining = projects.filter(p => p.id !== id);
+      setProjects(remaining);
+      if (activeProject.id === id && remaining[0]) {
+        setActiveProject(remaining[0]);
+      }
+      setIssues(prev => prev.filter(i => i.projectId !== id));
+      setSprints(prev => prev.filter(s => s.projectId !== id));
+      toast.success(res.message || 'Project deleted successfully!');
+      return true;
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Failed to delete project.'));
+      return false;
+    }
+  };
+
+  const createIssue = async (issueData: Partial<Issue>): Promise<Issue | null> => {
+    const targetProjectId = issueData.projectId || activeProject.id;
+    const targetProject = projects.find(p => p.id === targetProjectId) || activeProject;
+    const resolvedAssignee = issueData.assignee !== undefined
+      ? issueData.assignee
+      : (targetProject.defaultAssignee === 'lead' ? targetProject.lead : null);
+    const resolvedSprintId = issueData.sprintId !== undefined
+      ? issueData.sprintId
+      : (activeSprint ? activeSprint.id : null);
+
+    try {
+      const res = await saveWorkItem({
+        projectId: Number(targetProjectId) || 0,
+        type: (issueData.type as WorkItemType) || 'task',
+        title: (issueData.title || '').trim(),
+        description: (issueData.description || '').trim(),
+        priority: (issueData.priority as Priority) || 'medium',
+        status: issueData.status || (columns[1] ? columns[1].id : 'todo'),
+        assigneeId: resolvedAssignee ? Number(resolvedAssignee.id) || null : null,
+        sprintId: resolvedSprintId && resolvedSprintId !== 'backlog' ? Number(resolvedSprintId) || null : null,
+        storyPoints: issueData.storyPoints ?? 0,
+        dueDate: issueData.dueDate || null,
+        epicKey: issueData.epicKey || null,
+        labels: issueData.labels || []
+      });
+
+      const created = normalizeIssue(res.workItem);
+      setIssues(prev => [created, ...prev]);
+      setRecentActivity(prev => [
+        { text: `${currentUser.name} created ${created.key}: ${created.title}`, time: 'Just now', key: created.key },
+        ...prev.slice(0, 20)
+      ]);
+      toast.success(res.message || `Work item ${created.key} created successfully!`);
+      return created;
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, 'Failed to create work item.'));
+      return null;
+    }
   };
 
   const updateIssue = (id: string, updates: Partial<Issue>) => {
-    setIssues(prev =>
-      prev.map(issue => {
-        if (issue.id !== id) return issue;
+    const existing = issues.find(i => i.id === id);
+    if (!existing) return;
 
-        const updated = {
-          ...issue,
-          ...updates,
-          updatedAt: new Date().toISOString()
-        };
+    const merged: Issue = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date().toISOString()
+    };
 
-        // If priority changed to blocker, trigger in-app notification
-        if (updates.priority && updates.priority === 'blocker' && issue.priority !== 'blocker') {
-          setNotifications(prev => [
-            {
-              id: `notif-${Date.now()}`,
-              title: 'Critical Blocker Escalation',
-              message: `${issue.key} escalated to Blocker by ${currentUser.name}`,
-              timestamp: 'Just now',
-              read: false,
-              type: 'priority',
-              issueKey: issue.key,
-              author: currentUser
-            },
-            ...prev
-          ]);
+    setIssues(prev => prev.map(issue => (issue.id === id ? merged : issue)));
+
+    void updateWorkItemApi(id, toWorkItemPayload(merged))
+      .then(res => {
+        if (res?.success && res.workItem) {
+          const saved = normalizeIssue(res.workItem);
+          setIssues(prev => prev.map(i => (i.id === id ? saved : i)));
         }
-
-        return updated;
       })
-    );
+      .catch(err => {
+        setIssues(prev => prev.map(i => (i.id === id ? existing : i)));
+        toast.error(getApiErrorMessage(err, 'Failed to update work item.'));
+      });
   };
 
   const deleteIssue = (id: string) => {
     const target = issues.find(i => i.id === id);
-    setIssues(prev => prev.filter(i => i.id !== id));
-    if (selectedIssue?.id === id) {
-      setSelectedIssue(null);
-    }
-    if (target) {
-      setRecentActivity(prev => [
-        { text: `${currentUser.name} deleted work item ${target.key}`, time: 'Just now', key: target.key },
-        ...prev
-      ]);
-    }
+    if (!target) return;
+
+    void deleteWorkItemApi(id)
+      .then(res => {
+        setIssues(prev => prev.filter(i => i.id !== id));
+        if (selectedIssue?.id === id) setSelectedIssue(null);
+        setRecentActivity(prev => [
+          { text: `${currentUser.name} deleted work item ${target.key}`, time: 'Just now', key: target.key },
+          ...prev
+        ]);
+        toast.success(res.message || 'Work item deleted successfully!');
+      })
+      .catch(err => {
+        toast.error(getApiErrorMessage(err, 'Failed to delete work item.'));
+      });
   };
 
   const moveIssueStatus = (issueId: string, newStatus: string) => {
     const issue = issues.find(i => i.id === issueId);
     if (!issue || issue.status === newStatus) return;
 
-    const oldColumnName = columns.find(c => c.id === issue.status)?.name || issue.status;
     const newColumnName = columns.find(c => c.id === newStatus)?.name || newStatus;
-
-    const activity: { id: string; user: User; action: string; timestamp: string } = {
-      id: `act-${Date.now()}`,
-      user: currentUser,
-      action: `transitioned status from ${oldColumnName} to ${newColumnName}`,
-      timestamp: new Date().toISOString()
-    };
-
-    setIssues(prev =>
-      prev.map(item =>
-        item.id === issueId
-          ? {
-              ...item,
-              status: newStatus,
-              activities: [activity, ...item.activities],
-              updatedAt: new Date().toISOString()
-            }
-          : item
-      )
-    );
+    const merged: Issue = { ...issue, status: newStatus, updatedAt: new Date().toISOString() };
+    setIssues(prev => prev.map(item => (item.id === issueId ? merged : item)));
 
     setRecentActivity(prev => [
       { text: `${issue.key} moved to ${newColumnName} by ${currentUser.name}`, time: 'Just now', key: issue.key },
       ...prev.slice(0, 20)
     ]);
+
+    void updateWorkItemApi(issueId, toWorkItemPayload(merged))
+      .then(res => {
+        if (res?.success && res.workItem) {
+          const saved = normalizeIssue(res.workItem);
+          setIssues(prev => prev.map(i => (i.id === issueId ? saved : i)));
+        }
+      })
+      .catch(err => {
+        setIssues(prev => prev.map(i => (i.id === issueId ? issue : i)));
+        toast.error(getApiErrorMessage(err, 'Failed to move work item.'));
+      });
   };
 
   const moveIssueSprint = (issueId: string, targetSprintId: string | null) => {
-    setIssues(prev =>
-      prev.map(i =>
-        i.id === issueId
-          ? {
-              ...i,
-              sprintId: targetSprintId,
-              updatedAt: new Date().toISOString()
-            }
-          : i
-      )
-    );
+    const issue = issues.find(i => i.id === issueId);
+    if (!issue) return;
+
+    const merged: Issue = { ...issue, sprintId: targetSprintId, updatedAt: new Date().toISOString() };
+    setIssues(prev => prev.map(i => (i.id === issueId ? merged : i)));
+
+    void updateWorkItemApi(issueId, toWorkItemPayload(merged))
+      .then(res => {
+        if (res?.success && res.workItem) {
+          const saved = normalizeIssue(res.workItem);
+          setIssues(prev => prev.map(i => (i.id === issueId ? saved : i)));
+        }
+      })
+      .catch(err => {
+        setIssues(prev => prev.map(i => (i.id === issueId ? issue : i)));
+        toast.error(getApiErrorMessage(err, 'Failed to update sprint assignment.'));
+      });
   };
 
   const addComment = (issueId: string, content: string) => {

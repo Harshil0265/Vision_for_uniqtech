@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import {
   AlertCircle,
   ArrowLeft,
@@ -16,7 +17,6 @@ import {
   X
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { CONFIGURED_AUTH_MODE } from '../lib/authClient';
 import { VisionLogo } from './VisionLogo';
 
 export type AuthMode = 'signin' | 'signup' | 'forgot' | 'reset';
@@ -52,9 +52,6 @@ const strength = (pw: string): { score: number; label: string; color: string } =
   const colors = ['bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-emerald-500', 'bg-emerald-600'];
   return { score, label: labels[score], color: colors[score] };
 };
-
-// Demo account that ships with the mock API (and the offline demo mode). Offered in development builds only.
-const DEMO_ACCOUNT = { email: 'test@test.com', password: 'test' };
 
 const TITLES: Record<AuthMode, { heading: string; sub: string }> = {
   signin: { heading: 'Welcome back', sub: 'Sign in to continue to Vision.' },
@@ -118,6 +115,7 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ mode, onModeChange, onCl
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
       setError(null);
+      toast.error(Object.values(errors)[0]);
       return;
     }
 
@@ -128,7 +126,13 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ mode, onModeChange, onCl
       const result = await resetPassword(resetToken ?? '', password);
       setSubmitting(false);
       setResetResult({ tone: result.status === 'ok' ? 'success' : result.status === 'unavailable' ? 'info' : 'error', text: result.message ?? '' });
-      if (result.status === 'ok') { setPassword(''); setConfirm(''); }
+      if (result.status === 'ok') {
+        toast.success(result.message || 'Password reset successfully.');
+        setPassword('');
+        setConfirm('');
+      } else {
+        toast.error(result.message || 'Could not reset the password.');
+      }
       return;
     }
 
@@ -136,6 +140,8 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ mode, onModeChange, onCl
       const result = await requestPasswordReset(email);
       setSubmitting(false);
       setResetResult({ tone: result.status === 'ok' ? 'success' : result.status === 'unavailable' ? 'info' : 'error', text: result.message ?? '' });
+      if (result.status === 'ok') toast.success(result.message || 'Reset link sent.');
+      else toast.error(result.message || 'Could not send reset link.');
       return;
     }
 
@@ -144,8 +150,21 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ mode, onModeChange, onCl
       : await signIn(email.trim(), password);
     setSubmitting(false);
 
-    // On 'authenticated' the auth state flips and this dialog unmounts with the signed-out page.
-    if (result.status === 'error') setError(result.error);
+    if (result.status === 'error') {
+      setError(result.error);
+      toast.error(result.error);
+      return;
+    }
+
+    if (result.status === 'registered') {
+      toast.success(result.message);
+      setPassword('');
+      setConfirm('');
+      onModeChange('signin');
+      return;
+    }
+
+    toast.success(result.message || 'Login successful!');
   };
 
   const inputClass = (invalid?: boolean) =>
@@ -311,16 +330,6 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ mode, onModeChange, onCl
             </>
           )}
 
-          {import.meta.env.DEV && mode === 'signin' && (
-            <button
-              type="button"
-              onClick={() => { setEmail(DEMO_ACCOUNT.email); setPassword(DEMO_ACCOUNT.password); setError(null); setFieldErrors({}); }}
-              className="w-full text-left text-[11px] text-slate-500 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 border border-dashed border-slate-300 rounded-lg px-3 py-2 cursor-pointer"
-            >
-              Development only: fill in the demo account <span className="font-mono">{DEMO_ACCOUNT.email}</span>
-            </button>
-          )}
-
           <button
             type="submit"
             disabled={submitting}
@@ -345,7 +354,7 @@ export const AuthDialog: React.FC<AuthDialogProps> = ({ mode, onModeChange, onCl
 
           <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400 pt-1">
             <ShieldCheck className="w-3.5 h-3.5" />
-            {CONFIGURED_AUTH_MODE === 'local' ? 'Offline demo mode (no server)' : 'Secure sign-in'}
+            Secure sign-in
           </div>
         </form>
       </div>

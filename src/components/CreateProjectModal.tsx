@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { FolderPlus, Settings2, Trash2, X } from 'lucide-react';
+import { toast } from 'react-toastify';
 // Template picker is hidden for now: import { Bug, Check, Kanban, Layers } from 'lucide-react';
 import { useProject } from '../context/ProjectContext';
 import type { Project, ProjectMember, WorkItemType } from '../types';
@@ -83,6 +84,7 @@ const ProjectForm: React.FC<{ editing: Project | null }> = ({ editing }) => {
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [saving, setSaving] = useState(false);
   const clearError = (field: string) => setErrors(({ [field]: _removed, ...rest }) => rest);
 
   const activeUsers = teamMembers;
@@ -111,35 +113,45 @@ const ProjectForm: React.FC<{ editing: Project | null }> = ({ editing }) => {
     return Object.keys(next).length === 0;
   };
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validate()) return;
-    const lead = teamMembers.find(m => m.id === leadId) || currentUser;
-
-    if (editing) {
-      // The lead must be able to access the project.
-      const current = getProjectMembers(editing).map(m => m.member);
-      const members: ProjectMember[] = current.some(m => m.userId === lead.id)
-        ? current
-        : [...current, { userId: lead.id, role: 'admin', addedAt: new Date().toISOString() }];
-      updateProject(editing.id, {
-        name: name.trim(), description: description.trim(), lead, template, allowedIssueTypes: types, defaultAssignee, iconGradient, members
-      });
-      close();
+    if (saving) return;
+    if (!validate()) {
+      toast.error('Please fix the highlighted fields.');
       return;
     }
+    const lead = teamMembers.find(m => m.id === leadId) || currentUser;
 
-    const now = new Date().toISOString();
-    const members: ProjectMember[] = [
-      { userId: lead.id, role: 'owner', addedAt: now },
-      ...(lead.id !== currentUser.id ? [{ userId: currentUser.id, role: 'admin' as const, addedAt: now }] : []),
-      ...memberIds.map(userId => ({ userId, role: 'member' as const, addedAt: now }))
-    ];
-    createProject({
-      name: name.trim(), key, description: description.trim(), lead, template, allowedIssueTypes: types, defaultAssignee, iconGradient, members
-    });
-    close();
-    setActiveTab('board');
+    setSaving(true);
+    try {
+      if (editing) {
+        const current = getProjectMembers(editing).map(m => m.member);
+        const members: ProjectMember[] = current.some(m => m.userId === lead.id)
+          ? current
+          : [...current, { userId: lead.id, role: 'admin', addedAt: new Date().toISOString() }];
+        const ok = await updateProject(editing.id, {
+          name: name.trim(), description: description.trim(), lead, template, allowedIssueTypes: types, defaultAssignee, iconGradient, members
+        });
+        if (ok) close();
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const members: ProjectMember[] = [
+        { userId: lead.id, role: 'owner', addedAt: now },
+        ...(lead.id !== currentUser.id ? [{ userId: currentUser.id, role: 'admin' as const, addedAt: now }] : []),
+        ...memberIds.map(userId => ({ userId, role: 'member' as const, addedAt: now }))
+      ];
+      const created = await createProject({
+        name: name.trim(), key, description: description.trim(), lead, template, allowedIssueTypes: types, defaultAssignee, iconGradient, members
+      });
+      if (created) {
+        close();
+        setActiveTab('projects');
+      }
+    } finally {
+      setSaving(false);
+    }
   };
 
   const isOwner = editing ? myRoleIn(editing) === 'owner' : false;
@@ -154,8 +166,10 @@ const ProjectForm: React.FC<{ editing: Project | null }> = ({ editing }) => {
       onClose={close}
       footer={
         <>
-          <SecondaryButton type="button" onClick={close}>Cancel</SecondaryButton>
-          <PrimaryButton type="submit" form="project-form">{isEdit ? 'Save changes' : 'Create project'}</PrimaryButton>
+          <SecondaryButton type="button" onClick={close} disabled={saving}>Cancel</SecondaryButton>
+          <PrimaryButton type="submit" form="project-form" disabled={saving}>
+            {saving ? (isEdit ? 'Saving...' : 'Creating...') : (isEdit ? 'Save changes' : 'Create project')}
+          </PrimaryButton>
         </>
       }
     >
@@ -312,7 +326,7 @@ const ProjectForm: React.FC<{ editing: Project | null }> = ({ editing }) => {
                 <span className="text-[11px] text-slate-500">The last project cannot be deleted.</span>
               ) : confirmDelete ? (
                 <span className="flex items-center gap-2">
-                  <button type="button" onClick={() => { deleteProject(editing!.id); close(); }}
+                  <button type="button" disabled={saving} onClick={async () => { setSaving(true); const ok = await deleteProject(editing!.id); setSaving(false); if (ok) close(); }}
                     className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold cursor-pointer">Yes, delete</button>
                   <button type="button" onClick={() => setConfirmDelete(false)} className="text-xs text-slate-600 hover:text-slate-900 cursor-pointer">Cancel</button>
                 </span>

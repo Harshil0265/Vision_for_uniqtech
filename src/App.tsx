@@ -12,8 +12,7 @@ import { Sidebar } from './components/Sidebar';
 import { IssueDetailModal } from './components/IssueDetailModal';
 import { CreateIssueModal } from './components/CreateIssueModal';
 import { CreateProjectModal } from './components/CreateProjectModal';
-import { useAuth } from './context/AuthContext';
-import { Activity, Loader2, ServerCrash, ShieldCheck } from 'lucide-react';
+import { Activity, Loader2, ShieldCheck } from 'lucide-react';
 
 // Each page is its own chunk, loaded the first time it is opened.
 const DashboardView = lazy(() => import('./components/DashboardView').then(m => ({ default: m.DashboardView })));
@@ -33,7 +32,6 @@ const PageLoading: React.FC = () => (
 
 const AppContent: React.FC = () => {
   const { activeTab, recentActivity, realtimeStatus } = useProject();
-  const { mode } = useAuth();
 
   const renderActiveView = () => {
     switch (activeTab) {
@@ -103,17 +101,10 @@ const AppContent: React.FC = () => {
         </div>
 
         <div className="hidden md:flex items-center gap-4 shrink-0 font-mono text-[10px] text-slate-500">
-          {mode === 'local' ? (
-            <span className="flex items-center gap-1 font-medium text-amber-700" title="The backend API could not be reached. You are signed in with an offline demo account.">
-              <ServerCrash className="w-3 h-3" />
-              <span>Offline demo mode</span>
-            </span>
-          ) : (
-            <span className="flex items-center gap-1 font-medium">
-              <ShieldCheck className="w-3 h-3 text-emerald-600" />
-              <span>Signed in via API</span>
-            </span>
-          )}
+          <span className="flex items-center gap-1 font-medium">
+            <ShieldCheck className="w-3 h-3 text-emerald-600" />
+            <span>Signed in via API</span>
+          </span>
         </div>
       </footer>
 

@@ -7,7 +7,7 @@ type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 interface AuthContextType {
   status: AuthStatus;
   user: User | null;
-  /** 'api' = signed in through the .NET API, 'local' = offline demo account in this browser. */
+  /** 'api' = signed in through the .NET API. */
   mode: auth.AuthMode | null;
   /** True when a previous session ended because it expired or was rejected by the server. */
   sessionExpired: boolean;
